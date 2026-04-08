@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "GSC URL Indexer",
   "version": "1.0.0",
-  "description": "Bulk check and request indexing for your sitemap URLs via Google Search Console. Tracks progress, daily quota, and remembers indexed URLs.",
+  "description": "Bulk check and request indexing for sitemap URLs via Google Search Console.",
   "permissions": ["storage", "activeTab", "tabs", "scripting"],
   "host_permissions": [
     "https://search.google.com/*"
