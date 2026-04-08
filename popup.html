@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 650px;
+      height: 600px;
+      overflow: hidden;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-size: 13px;
+      color: #1a1a1a;
+      padding: 12px 16px;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .input-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    input[type="text"] {
+      flex: 1;
+      padding: 7px 10px;
+      border: 1px solid #d0d0d0;
+      border-radius: 4px;
+      font-size: 13px;
+      outline: none;
+    }
+    input[type="text"]:focus { border-color: #4285f4; }
+    button {
+      padding: 7px 16px;
+      border: none;
+      border-radius: 4px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    #startBtn { background: #1a73e8; color: #fff; }
+    #startBtn:hover { background: #1557b0; }
+    #stopBtn { background: #ea4335; color: #fff; display: none; }
+    #stopBtn:hover { background: #c5221f; }
+    #clearBtn { background: none; color: #5f6368; padding: 4px 8px; font-size: 11px; }
+    #clearBtn:hover { color: #1a73e8; }
+
+    /* Info panel */
+    .info-panel {
+      background: #f8f9fa;
+      border: 1px solid #e0e0e0;
+      border-radius: 4px;
+      padding: 10px 12px;
+      margin-bottom: 10px;
+      font-size: 12px;
+      line-height: 1.7;
+      color: #3c4043;
+    }
+    .info-row {
+      margin-top: 4px;
+      line-height: 1.6;
+    }
+    .info-row b { font-weight: 600; color: #1a1a1a; }
+    .c-green { color: #137333 !important; }
+    .c-blue { color: #1a73e8 !important; }
+    .c-red { color: #c5221f !important; }
+    .info-row.secondary { color: #5f6368; font-size: 11px; border-top: 1px solid #e0e0e0; padding-top: 4px; margin-top: 6px; }
+    .info-panel .status-line {
+      font-weight: 600;
+      margin-bottom: 2px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .progress-bar {
+      flex: 1;
+      height: 4px;
+      background: #e0e0e0;
+      border-radius: 2px;
+      overflow: hidden;
+      display: none;
+    }
+    .progress-bar.visible { display: block; }
+    .progress-bar-fill {
+      height: 100%;
+      background: #1a73e8;
+      border-radius: 2px;
+      transition: width 0.3s ease;
+    }
+    .progress-bar.done .progress-bar-fill { background: #137333; }
+    .current-url {
+      font-size: 11px;
+      color: #5f6368;
+      word-break: break-all;
+      margin-bottom: 4px;
+      min-height: 16px;
+    }
+
+    /* Tabs */
+    .tabs {
+      display: flex;
+      gap: 0;
+      border-bottom: 1px solid #e0e0e0;
+    }
+    .tab {
+      padding: 6px 14px;
+      font-size: 12px;
+      font-weight: 500;
+      color: #5f6368;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -1px;
+      background: none;
+      border-radius: 0;
+    }
+    .tab.active { color: #1a73e8; border-bottom-color: #1a73e8; }
+    .tab:hover { color: #1a73e8; }
+
+    /* Tab panels */
+    .tab-content { flex: 1; min-height: 0; position: relative; }
+    .tab-panel { display: none; position: absolute; top: 0; left: 0; right: 0; bottom: 0; }
+    .tab-panel.active { display: block; }
+
+    #logPanel, #remainingPanel, #sitemapsPanel {
+      height: 100%;
+      overflow-y: auto;
+      padding: 6px 8px;
+      font-family: "Cascadia Code", "Fira Code", monospace;
+      font-size: 11px;
+      line-height: 1.6;
+      background: #fafafa;
+      border: 1px solid #e0e0e0;
+      border-top: none;
+      border-radius: 0 0 4px 4px;
+    }
+    .log-entry { padding: 1px 0; }
+    .log-entry .log-time { color: #9e9e9e; margin-right: 6px; }
+    a { color: inherit; text-decoration: underline; text-decoration-color: rgba(0,0,0,0.2); }
+    a:hover { text-decoration-color: currentColor; }
+    .log-entry.info { color: #333; }
+    .log-entry.success { color: #137333; }
+    .log-entry.warning { color: #b06000; }
+    .log-entry.error { color: #c5221f; }
+
+    .sitemap-entry {
+      padding: 6px 0;
+      border-bottom: 1px solid #f0f0f0;
+      cursor: pointer;
+    }
+    .sitemap-entry:hover { background: #f0f4ff; margin: 0 -8px; padding: 6px 8px; }
+    .sitemap-entry .sitemap-url { color: #1a73e8; word-break: break-all; }
+    .sitemap-entry .sitemap-meta { font-size: 10px; color: #9e9e9e; margin-top: 2px; }
+
+    .remaining-url {
+      padding: 2px 0;
+      color: #3c4043;
+      border-bottom: 1px solid #f0f0f0;
+    }
+    .remaining-url.current { font-weight: 600; }
+    .remaining-url .url-index { color: #9e9e9e; display: inline-block; width: 35px; }
+
+    .footer {
+      margin-top: 6px;
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="input-row">
+    <input type="text" id="sitemapUrl" placeholder="Sitemap URL (e.g. https://example.com/sitemap.xml)" />
+    <button id="startBtn">Start</button>
+    <button id="stopBtn">Stop</button>
+  </div>
+
+  <div class="info-panel" id="infoPanel">
+    <div class="status-line">
+      <span id="statusLine">Ready</span>
+      <div class="progress-bar" id="progressBar"><div class="progress-bar-fill" id="progressFill"></div></div>
+    </div>
+    <div class="current-url" id="currentUrl"></div>
+    <div class="info-rows">
+      <div class="info-row">On Google: <b id="valIndexed" class="c-green">0</b> &nbsp;&middot;&nbsp; Requested: <b id="valRequested" class="c-blue">0</b> &nbsp;&middot;&nbsp; Errors: <b id="valErrors" class="c-red">0</b> &nbsp;&middot;&nbsp; Remaining: <b id="valRemaining">0</b></div>
+      <div class="info-row secondary">Today: <b id="valTodayChecks">0</b> checks, <b id="valTodayRequests">0</b><span id="quotaLimit"> / 10</span> requests &nbsp;|&nbsp; Last run: <b id="valLastRun">never</b> &nbsp;|&nbsp; All-time: <b id="valAllTime">0</b></div>
+    </div>
+  </div>
+
+  <div class="tabs">
+    <div class="tab active" data-tab="log">Logs</div>
+    <div class="tab" data-tab="remaining">Remaining (<span id="remainingCount">0</span>)</div>
+    <div class="tab" data-tab="sitemaps">Sitemaps</div>
+  </div>
+
+  <div class="tab-content">
+    <div id="logPanel" class="tab-panel active"></div>
+    <div id="remainingPanel" class="tab-panel"></div>
+    <div id="sitemapsPanel" class="tab-panel"></div>
+  </div>
+
+  <div class="footer">
+    <button id="clearBtn">Clear memory</button>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
