@@ -11,6 +11,7 @@ let state = {
   results: [],
   gscTabId: null,
   logs: [], // persisted log entries for popup to read on open
+  alreadyDone: 0,
 };
 
 const REQUEST_DELAY_MS = 5000;
@@ -427,6 +428,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // Filter already indexed
         const indexed = await Storage.getIndexedUrls(msg.sitemapUrl);
         state.queue = allUrls.filter((u) => !indexed.has(u));
+        state.alreadyDone = indexed.size;
 
         log(`${allUrls.length} URLs in sitemap, ${indexed.size} already done, ${state.queue.length} to process`);
 
@@ -483,6 +485,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         results: state.results,
         remaining,
         logs: state.logs,
+        alreadyDone: state.alreadyDone,
         runStats: runStatsData.runStats || null,
         dailyQuota: quota,
       });

@@ -16,6 +16,7 @@ const els = {
   valIndexed: $("valIndexed"),
   valRequested: $("valRequested"),
   valErrors: $("valErrors"),
+  valDone: $("valDone"),
   valRemaining: $("valRemaining"),
   valTodayChecks: $("valTodayChecks"),
   valTodayRequests: $("valTodayRequests"),
@@ -23,7 +24,7 @@ const els = {
   valAllTime: $("valAllTime"),
 };
 
-let stats = { checked: 0, indexed: 0, requested: 0, errors: 0, remaining: 0 };
+let stats = { checked: 0, indexed: 0, requested: 0, errors: 0, done: 0, remaining: 0 };
 let remainingUrls = [];
 let currentProcessingIndex = -1;
 
@@ -72,6 +73,7 @@ function updateInfo() {
   els.valIndexed.textContent = stats.indexed;
   els.valRequested.textContent = stats.requested;
   els.valErrors.textContent = stats.errors;
+  els.valDone.textContent = stats.done;
   els.valRemaining.textContent = stats.remaining;
   els.remainingCount.textContent = stats.remaining;
 
@@ -196,6 +198,7 @@ chrome.runtime.sendMessage({ type: "GET_STATE" }, (s) => {
     stats.requested = s.results.filter((r) => r.action === "requested_indexing").length;
     stats.errors = s.results.filter((r) => r.error).length;
     stats.remaining = s.total - s.results.length;
+    stats.done = s.alreadyDone || 0;
     remainingUrls = s.remaining || [];
     currentProcessingIndex = s.currentIndex;
     updateInfo();
@@ -290,6 +293,7 @@ chrome.runtime.onMessage.addListener((msg) => {
 
     case "ready":
       stats.remaining = msg.toProcess;
+      stats.done = msg.alreadyIndexed || 0;
       updateInfo();
       setStatus(`${msg.toProcess} URLs to process`);
       break;
