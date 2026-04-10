@@ -41,8 +41,22 @@
       cursor: pointer;
       white-space: nowrap;
     }
+    #modeSelect {
+      padding: 7px 8px;
+      border: 1px solid #d0d0d0;
+      border-radius: 4px;
+      font-size: 13px;
+      background: #fff;
+      cursor: pointer;
+      outline: none;
+    }
+    #modeSelect:focus { border-color: #4285f4; }
     #startBtn { background: #1a73e8; color: #fff; }
     #startBtn:hover { background: #1557b0; }
+    #pauseBtn { background: #f9ab00; color: #fff; display: none; }
+    #pauseBtn:hover { background: #e09800; }
+    #pauseBtn.resume { background: #34a853; }
+    #pauseBtn.resume:hover { background: #2d8e47; }
     #stopBtn { background: #ea4335; color: #fff; display: none; }
     #stopBtn:hover { background: #c5221f; }
     #clearBtn { background: none; color: #5f6368; padding: 4px 8px; font-size: 11px; }
@@ -174,7 +188,12 @@
 <body>
   <div class="input-row">
     <input type="text" id="sitemapUrl" placeholder="Sitemap URL (e.g. https://example.com/sitemap.xml)" />
+    <select id="modeSelect">
+      <option value="index">Index</option>
+      <option value="inspect">Inspect</option>
+    </select>
     <button id="startBtn">Start</button>
+    <button id="pauseBtn">Pause</button>
     <button id="stopBtn">Stop</button>
   </div>
 
@@ -185,8 +204,8 @@
     </div>
     <div class="current-url" id="currentUrl"></div>
     <div class="info-rows">
-      <div class="info-row">On Google: <b id="valIndexed" class="c-green">0</b> &nbsp;&middot;&nbsp; Requested: <b id="valRequested" class="c-blue">0</b> &nbsp;&middot;&nbsp; Errors: <b id="valErrors" class="c-red">0</b> &nbsp;&middot;&nbsp; Done: <b id="valDone" class="c-gray">0</b> &nbsp;&middot;&nbsp; Remaining: <b id="valRemaining">0</b></div>
-      <div class="info-row secondary">Today: <b id="valTodayChecks">0</b> checks, <b id="valTodayRequests">0</b><span id="quotaLimit"> / 10</span> requests &nbsp;|&nbsp; Last run: <b id="valLastRun">never</b> &nbsp;|&nbsp; All-time: <b id="valAllTime">0</b></div>
+      <div class="info-row">On Google: <b id="valIndexed" class="c-green">0</b> &nbsp;&middot;&nbsp; <span id="labelRequested">Requested</span>: <b id="valRequested" class="c-blue">0</b> &nbsp;&middot;&nbsp; Errors: <b id="valErrors" class="c-red">0</b> &nbsp;&middot;&nbsp; Done: <b id="valDone" class="c-gray">0</b> &nbsp;&middot;&nbsp; Remaining: <b id="valRemaining">0</b></div>
+      <div class="info-row secondary">Today: <b id="valTodayChecks">0</b> checks, <b id="valTodayRequests">0</b><span id="quotaLimit"> / 10</span> requests <span id="quotaCountdown" style="color:#ff9800;"></span> &nbsp;|&nbsp; Last run: <b id="valLastRun">never</b> &nbsp;|&nbsp; All-time: <b id="valAllTime">0</b></div>
     </div>
   </div>
 

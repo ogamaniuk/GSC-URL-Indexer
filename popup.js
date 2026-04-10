@@ -2,9 +2,12 @@ const $ = (id) => document.getElementById(id);
 
 const els = {
   sitemapUrl: $("sitemapUrl"),
+  modeSelect: $("modeSelect"),
   startBtn: $("startBtn"),
+  pauseBtn: $("pauseBtn"),
   stopBtn: $("stopBtn"),
   clearBtn: $("clearBtn"),
+  labelRequested: $("labelRequested"),
   logPanel: $("logPanel"),
   remainingPanel: $("remainingPanel"),
   sitemapsPanel: $("sitemapsPanel"),
@@ -22,11 +25,38 @@ const els = {
   valTodayRequests: $("valTodayRequests"),
   valLastRun: $("valLastRun"),
   valAllTime: $("valAllTime"),
+  quotaCountdown: $("quotaCountdown"),
 };
 
 let stats = { checked: 0, indexed: 0, requested: 0, errors: 0, done: 0, remaining: 0 };
 let remainingUrls = [];
 let currentProcessingIndex = -1;
+let countdownInterval = null;
+let currentMode = "index";
+let isPaused = false;
+
+function startCountdown(nextResetMs) {
+  if (!nextResetMs) return;
+  if (countdownInterval) clearInterval(countdownInterval);
+  function update() {
+    const diff = nextResetMs - Date.now();
+    if (diff <= 0) {
+      els.quotaCountdown.textContent = "(quota reset!)";
+      clearInterval(countdownInterval);
+      return;
+    }
+    const h = Math.floor(diff / 3600000);
+    const m = Math.floor((diff % 3600000) / 60000);
+    const s = Math.floor((diff % 60000) / 1000);
+    if (h > 0) {
+      els.quotaCountdown.textContent = `(resets in ${h}h ${m}m)`;
+    } else {
+      els.quotaCountdown.textContent = `(resets in ${m}m ${s}s)`;
+    }
+  }
+  update();
+  countdownInterval = setInterval(update, 1000);
+}
 
 // ── Tabs ──
 document.querySelectorAll(".tab").forEach((tab) => {
@@ -96,6 +126,7 @@ function updateMeta(runStats, dailyQuota) {
   if (dailyQuota) {
     els.valTodayChecks.textContent = dailyQuota.checks.toLocaleString();
     els.valTodayRequests.textContent = dailyQuota.indexRequests.toLocaleString();
+    startCountdown(dailyQuota.nextResetMs);
   }
 }
 
@@ -175,11 +206,34 @@ function loadSitemaps() {
   });
 }
 
+// ── Mode labels ──
+function updateStatsLabels() {
+  if (currentMode === "inspect") {
+    els.labelRequested.textContent = "Not on Google";
+    els.valRequested.className = "c-red";
+  } else {
+    els.labelRequested.textContent = "Requested";
+    els.valRequested.className = "c-blue";
+  }
+}
+
+els.modeSelect.addEventListener("change", () => {
+  currentMode = els.modeSelect.value;
+  updateStatsLabels();
+});
+
 // ── Running state ──
 function setRunning(running) {
   els.startBtn.style.display = running ? "none" : "";
+  els.pauseBtn.style.display = running ? "" : "none";
   els.stopBtn.style.display = running ? "" : "none";
   els.sitemapUrl.disabled = running;
+  els.modeSelect.disabled = running;
+  if (!running) {
+    isPaused = false;
+    els.pauseBtn.textContent = "Pause";
+    els.pauseBtn.classList.remove("resume");
+  }
 }
 
 // ── Restore state on popup open ──
@@ -192,10 +246,17 @@ chrome.storage.local.get("lastSitemapUrl", (data) => {
 chrome.runtime.sendMessage({ type: "GET_STATE" }, (s) => {
   if (!s) return;
 
+  // Restore mode
+  if (s.mode) {
+    currentMode = s.mode;
+    els.modeSelect.value = s.mode;
+    updateStatsLabels();
+  }
+
   if (s.total > 0) {
     stats.checked = s.results.length;
     stats.indexed = s.results.filter((r) => r.action === "already_indexed").length;
-    stats.requested = s.results.filter((r) => r.action === "requested_indexing").length;
+    stats.requested = s.results.filter((r) => r.action === "requested_indexing" || r.action === "not_indexed").length;
     stats.errors = s.results.filter((r) => r.error).length;
     stats.remaining = s.total - s.results.length;
     stats.done = s.alreadyDone || 0;
@@ -217,7 +278,14 @@ chrome.runtime.sendMessage({ type: "GET_STATE" }, (s) => {
 
   if (s.running) {
     setRunning(true);
-    setStatus(`Processing ${s.currentIndex + 1} of ${s.total}...`);
+    if (s.paused) {
+      isPaused = true;
+      els.pauseBtn.textContent = "Resume";
+      els.pauseBtn.classList.add("resume");
+      setStatus("Paused");
+    } else {
+      setStatus(`Processing ${s.currentIndex + 1} of ${s.total}...`);
+    }
   } else if (s.results.length > 0 && s.results.length >= s.total) {
     setStatus(`Complete — ${s.results.length} checked`);
   } else if (s.results.length > 0) {
@@ -244,7 +312,7 @@ els.startBtn.addEventListener("click", () => {
   els.progressFill.style.width = "0%";
   setStatus("Fetching sitemap...");
 
-  chrome.runtime.sendMessage({ type: "START", sitemapUrl }, (response) => {
+  chrome.runtime.sendMessage({ type: "START", sitemapUrl, mode: currentMode }, (response) => {
     if (chrome.runtime.lastError) {
       addLogEntry(`Error: ${chrome.runtime.lastError.message}`, "error");
       setRunning(false);
@@ -257,6 +325,23 @@ els.startBtn.addEventListener("click", () => {
       setStatus("Error");
     }
   });
+});
+
+// ── Pause / Resume ──
+els.pauseBtn.addEventListener("click", () => {
+  if (!isPaused) {
+    chrome.runtime.sendMessage({ type: "PAUSE" });
+    isPaused = true;
+    els.pauseBtn.textContent = "Resume";
+    els.pauseBtn.classList.add("resume");
+    setStatus("Paused");
+  } else {
+    chrome.runtime.sendMessage({ type: "RESUME" });
+    isPaused = false;
+    els.pauseBtn.textContent = "Pause";
+    els.pauseBtn.classList.remove("resume");
+    setStatus("Resuming...");
+  }
 });
 
 // ── Stop ──
@@ -312,6 +397,7 @@ chrome.runtime.onMessage.addListener((msg) => {
       stats.checked++;
       if (r.action === "already_indexed") stats.indexed++;
       else if (r.action === "requested_indexing") stats.requested++;
+      else if (r.action === "not_indexed") stats.requested++;
       else if (r.error) stats.errors++;
       stats.remaining = msg.total - msg.index - 1;
       updateInfo();
@@ -333,7 +419,11 @@ chrome.runtime.onMessage.addListener((msg) => {
       break;
 
     case "complete":
-      setStatus(`Complete — ${stats.checked} checked, ${stats.indexed} on Google, ${stats.requested} requested`);
+      if (currentMode === "inspect") {
+        setStatus(`Complete — ${stats.checked} checked, ${stats.indexed} on Google, ${stats.requested} not on Google`);
+      } else {
+        setStatus(`Complete — ${stats.checked} checked, ${stats.indexed} on Google, ${stats.requested} requested`);
+      }
       stats.remaining = 0;
       remainingUrls = [];
       updateInfo();

@@ -1,9 +1,12 @@
 // Service worker: orchestrates URL processing between popup and content script.
 
 importScripts("storage.js");
+importScripts("quota-time.js");
 
 let state = {
   running: false,
+  paused: false,
+  mode: "index", // "index" or "inspect"
   sitemapUrl: null,
   gscProperty: null,
   queue: [],
@@ -36,13 +39,13 @@ async function updateRunStats(action) {
  * Track daily quota usage.
  */
 async function trackQuotaUsage(type) {
-  const today = new Date().toISOString().slice(0, 10);
+  const periodId = getQuotaPeriodId();
   const data = await chrome.storage.local.get("dailyQuota");
-  const quota = data.dailyQuota || { date: today, checks: 0, indexRequests: 0 };
+  const quota = data.dailyQuota || { date: periodId, checks: 0, indexRequests: 0 };
 
-  // Reset if new day
-  if (quota.date !== today) {
-    quota.date = today;
+  // Reset if new quota period (2 PM Pacific)
+  if (quota.date !== periodId) {
+    quota.date = periodId;
     quota.checks = 0;
     quota.indexRequests = 0;
   }
@@ -81,10 +84,11 @@ async function trackRateLimit() {
 }
 
 async function getDailyQuota() {
-  const today = new Date().toISOString().slice(0, 10);
+  const periodId = getQuotaPeriodId();
   const data = await chrome.storage.local.get("dailyQuota");
-  const quota = data.dailyQuota || { date: today, checks: 0, indexRequests: 0 };
-  if (quota.date !== today) return { date: today, checks: 0, indexRequests: 0 };
+  const quota = data.dailyQuota || { date: periodId, checks: 0, indexRequests: 0 };
+  if (quota.date !== periodId) return { date: periodId, checks: 0, indexRequests: 0, nextResetMs: getNextResetMs() };
+  quota.nextResetMs = getNextResetMs();
   return quota;
 }
 
@@ -114,8 +118,8 @@ function updateBadge() {
   chrome.action.setBadgeText({ text: `${processed}` });
   chrome.action.setBadgeTextColor({ color: "#ffffff" });
 
-  // Color: green if done, blue if running
-  const bgColor = state.running ? "#1a73e8" : "#34a853";
+  // Color: yellow if paused, green if done, blue if running
+  const bgColor = state.paused ? "#f9ab00" : state.running ? "#1a73e8" : "#34a853";
   chrome.action.setBadgeBackgroundColor({ color: bgColor });
 }
 
@@ -243,7 +247,7 @@ async function waitForContentScript(tabId, timeoutMs = 30000) {
 }
 
 /**
- * Send a URL to the content script for processing.
+ * Send a URL to the content script for processing (index mode).
  */
 async function processUrlInTab(tabId, url) {
   return new Promise((resolve, reject) => {
@@ -255,6 +259,30 @@ async function processUrlInTab(tabId, url) {
       }
     });
   });
+}
+
+/**
+ * Send a URL to the content script for inspection only (inspect mode).
+ */
+async function inspectUrlInTab(tabId, url) {
+  return new Promise((resolve, reject) => {
+    chrome.tabs.sendMessage(tabId, { type: "INSPECT_URL", url }, (response) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+      } else {
+        resolve(response);
+      }
+    });
+  });
+}
+
+/**
+ * Wait while processing is paused. Returns when unpaused or stopped.
+ */
+async function waitWhilePaused() {
+  while (state.paused && state.running) {
+    await sleep(500);
+  }
 }
 
 /**
@@ -275,7 +303,8 @@ async function processQueue() {
 
   try {
     const gscProperty = state.gscProperty;
-    log(`Starting: ${state.queue.length} URLs for ${gscProperty}`);
+    const modeLabel = state.mode === "inspect" ? "Inspecting" : "Indexing";
+    log(`${modeLabel}: ${state.queue.length} URLs for ${gscProperty}`);
 
     const tabId = await ensureGscTab(gscProperty);
     console.log(`[GSC Indexer] GSC tab opened: ${tabId}`);
@@ -285,6 +314,9 @@ async function processQueue() {
     await waitForContentScript(tabId);
 
     for (let i = state.currentIndex; i < state.queue.length; i++) {
+      // Wait if paused
+      await waitWhilePaused();
+
       if (!state.running) {
         log("Processing stopped by user", "warning");
         broadcastProgress({ status: "stopped", index: i, total: state.queue.length });
@@ -313,7 +345,11 @@ async function processQueue() {
 
       let result;
       try {
-        result = await processUrlInTab(tabId, url);
+        if (state.mode === "inspect") {
+          result = await inspectUrlInTab(tabId, url);
+        } else {
+          result = await processUrlInTab(tabId, url);
+        }
       } catch (e) {
         log(`Error processing ${url}: ${e.message}`, "error");
         result = { url, is_indexed: null, status: null, action: null, error: e.message };
@@ -330,6 +366,8 @@ async function processQueue() {
       // Log result
       if (result.action === "already_indexed") {
         log(`  → already indexed`, "success");
+      } else if (result.action === "not_indexed") {
+        log(`  → not on Google`, "warning");
       } else if (result.action === "requested_indexing") {
         await trackQuotaUsage("index");
         const updatedQuota = await getDailyQuota();
@@ -341,8 +379,8 @@ async function processQueue() {
       // Broadcast updated meta to popup
       broadcastProgress({ status: "meta_update", runStats, dailyQuota: quota });
 
-      // Save to storage if indexed or indexing requested
-      if (result.action === "already_indexed" || result.action === "requested_indexing") {
+      // Save to storage if confirmed indexed (or indexing requested in index mode)
+      if (result.action === "already_indexed" || (state.mode === "index" && result.action === "requested_indexing")) {
         await Storage.saveIndexedUrl(state.sitemapUrl, url);
       }
 
@@ -391,9 +429,14 @@ async function processQueue() {
     state.running = false;
     updateBadge();
     const sessionIndexed = state.results.filter(r => r.action === "already_indexed").length;
-    const sessionRequested = state.results.filter(r => r.action === "requested_indexing").length;
     const sessionErrors = state.results.filter(r => r.error).length;
-    log(`Done! ${state.results.length} processed, ${sessionIndexed} indexed, ${sessionRequested} requested, ${sessionErrors} errors`, "success");
+    if (state.mode === "inspect") {
+      const sessionNotIndexed = state.results.filter(r => r.action === "not_indexed").length;
+      log(`Done! ${state.results.length} checked, ${sessionIndexed} on Google, ${sessionNotIndexed} not on Google, ${sessionErrors} errors`, "success");
+    } else {
+      const sessionRequested = state.results.filter(r => r.action === "requested_indexing").length;
+      log(`Done! ${state.results.length} processed, ${sessionIndexed} indexed, ${sessionRequested} requested, ${sessionErrors} errors`, "success");
+    }
 
     broadcastProgress({ status: "complete", total: state.queue.length, results: state.results });
 
@@ -417,6 +460,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       try {
         state.sitemapUrl = msg.sitemapUrl;
         state.gscProperty = deriveGscProperty(msg.sitemapUrl);
+        state.mode = msg.mode || "index";
+        state.paused = false;
         state.results = [];
         state.currentIndex = 0;
         state.logs = [];
@@ -463,7 +508,24 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.type === "STOP") {
     state.running = false;
+    state.paused = false;
     log("Stop requested by user", "warning");
+    updateBadge();
+    sendResponse({ ok: true });
+    return false;
+  }
+
+  if (msg.type === "PAUSE") {
+    state.paused = true;
+    log("Paused by user", "warning");
+    updateBadge();
+    sendResponse({ ok: true });
+    return false;
+  }
+
+  if (msg.type === "RESUME") {
+    state.paused = false;
+    log("Resumed by user", "info");
     updateBadge();
     sendResponse({ ok: true });
     return false;
@@ -478,6 +540,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       const quota = await getDailyQuota();
       sendResponse({
         running: state.running,
+        paused: state.paused,
+        mode: state.mode,
         sitemapUrl: state.sitemapUrl,
         gscProperty: state.gscProperty,
         currentIndex: state.currentIndex,

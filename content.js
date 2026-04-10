@@ -192,6 +192,46 @@ const GSC = {
   },
 
   /**
+   * Inspect a single URL: check status only, never request indexing.
+   */
+  async inspectUrl(url) {
+    const result = { url, is_indexed: null, status: null, action: null, error: null };
+
+    try {
+      const bodyText = document.body.innerText;
+      if (bodyText.includes("429") && bodyText.includes("too many requests")) {
+        result.action = "rate_limited";
+        result.error = "429 Too Many Requests — rate limited by Google";
+        return result;
+      }
+
+      await this.submitUrl(url);
+      await this.sleep(5000);
+
+      const status = await this.waitForStatus(60000);
+
+      if (!status) {
+        result.error = "Could not determine indexing status";
+        return result;
+      }
+
+      result.status = status;
+
+      if (status === "indexed") {
+        result.is_indexed = true;
+        result.action = "already_indexed";
+      } else {
+        result.is_indexed = false;
+        result.action = "not_indexed";
+      }
+    } catch (e) {
+      result.error = e.message;
+    }
+
+    return result;
+  },
+
+  /**
    * Process a single URL: inspect, check status, request indexing if needed.
    */
   async processUrl(url) {
@@ -259,6 +299,11 @@ const GSC = {
 
 // Listen for messages from background script
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg.type === "INSPECT_URL") {
+    GSC.inspectUrl(msg.url).then(sendResponse);
+    return true;
+  }
+
   if (msg.type === "PROCESS_URL") {
     GSC.processUrl(msg.url).then(sendResponse);
     return true; // keep channel open for async response
