@@ -15,6 +15,7 @@ let state = {
   gscTabId: null,
   logs: [], // persisted log entries for popup to read on open
   alreadyDone: 0,
+  inputSource: "sitemap", // "sitemap" or "paste"
 };
 
 const REQUEST_DELAY_MS = 5000;
@@ -458,33 +459,43 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "START") {
     (async () => {
       try {
-        state.sitemapUrl = msg.sitemapUrl;
-        state.gscProperty = deriveGscProperty(msg.sitemapUrl);
         state.mode = msg.mode || "index";
         state.paused = false;
         state.results = [];
         state.currentIndex = 0;
         state.logs = [];
 
-        // Fetch sitemap
-        broadcastProgress({ status: "fetching_sitemap" });
-        const allUrls = await fetchSitemap(msg.sitemapUrl);
+        let allUrls;
+
+        if (msg.rawUrls && msg.rawUrls.length > 0) {
+          // Paste mode: URLs provided directly
+          allUrls = msg.rawUrls;
+          state.sitemapUrl = allUrls[0]; // used as domain key source
+          state.gscProperty = deriveGscProperty(allUrls[0]);
+          state.inputSource = "paste";
+          log(`${allUrls.length} pasted URLs for ${state.gscProperty}`);
+        } else {
+          // Sitemap mode: fetch and parse
+          state.sitemapUrl = msg.sitemapUrl;
+          state.gscProperty = deriveGscProperty(msg.sitemapUrl);
+          state.inputSource = "sitemap";
+          broadcastProgress({ status: "fetching_sitemap" });
+          allUrls = await fetchSitemap(msg.sitemapUrl);
+          await trackSitemapHistory(msg.sitemapUrl, allUrls.length);
+        }
 
         // Filter already indexed
-        const indexed = await Storage.getIndexedUrls(msg.sitemapUrl);
+        const indexed = await Storage.getIndexedUrls(state.sitemapUrl);
         state.queue = allUrls.filter((u) => !indexed.has(u));
         state.alreadyDone = indexed.size;
 
-        log(`${allUrls.length} URLs in sitemap, ${indexed.size} already done, ${state.queue.length} to process`);
+        log(`${allUrls.length} URLs total, ${indexed.size} already done, ${state.queue.length} to process`);
 
         // Update last run timestamp immediately
         const data = await chrome.storage.local.get("runStats");
         const rs = data.runStats || { totalProcessed: 0, totalIndexed: 0, totalRequested: 0, lastRunAt: null };
         rs.lastRunAt = Date.now();
         await chrome.storage.local.set({ runStats: rs });
-
-        // Track sitemap history
-        await trackSitemapHistory(msg.sitemapUrl, allUrls.length);
 
         broadcastProgress({
           status: "ready",
@@ -550,6 +561,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         remaining,
         logs: state.logs,
         alreadyDone: state.alreadyDone,
+        inputSource: state.inputSource,
         runStats: runStatsData.runStats || null,
         dailyQuota: quota,
       });

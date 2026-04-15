@@ -26,6 +26,9 @@ const els = {
   valLastRun: $("valLastRun"),
   valAllTime: $("valAllTime"),
   quotaCountdown: $("quotaCountdown"),
+  rawUrlsInput: $("rawUrlsInput"),
+  srcSitemap: $("srcSitemap"),
+  srcPaste: $("srcPaste"),
 };
 
 let stats = { checked: 0, indexed: 0, requested: 0, errors: 0, done: 0, remaining: 0 };
@@ -34,6 +37,25 @@ let currentProcessingIndex = -1;
 let countdownInterval = null;
 let currentMode = "index";
 let isPaused = false;
+let inputSource = "sitemap";
+
+// ── Source toggle ──
+function setInputSource(source) {
+  inputSource = source;
+  els.srcSitemap.classList.toggle("active", source === "sitemap");
+  els.srcPaste.classList.toggle("active", source === "paste");
+  els.sitemapUrl.style.display = source === "sitemap" ? "" : "none";
+  els.rawUrlsInput.style.display = source === "paste" ? "block" : "none";
+}
+
+els.srcSitemap.addEventListener("click", () => setInputSource("sitemap"));
+els.srcPaste.addEventListener("click", () => setInputSource("paste"));
+
+function extractUrls(text) {
+  const matches = text.match(/https?:\/\/[^\s,<>"']+/gi) || [];
+  const cleaned = matches.map((u) => u.replace(/[.)>,;]+$/, ""));
+  return [...new Set(cleaned)];
+}
 
 function startCountdown(nextResetMs) {
   if (!nextResetMs) return;
@@ -228,6 +250,7 @@ function setRunning(running) {
   els.pauseBtn.style.display = running ? "" : "none";
   els.stopBtn.style.display = running ? "" : "none";
   els.sitemapUrl.disabled = running;
+  els.rawUrlsInput.disabled = running;
   els.modeSelect.disabled = running;
   if (!running) {
     isPaused = false;
@@ -264,6 +287,7 @@ chrome.runtime.sendMessage({ type: "GET_STATE" }, (s) => {
     currentProcessingIndex = s.currentIndex;
     updateInfo();
     renderRemaining();
+    if (s.inputSource === "paste") setInputSource("paste");
     if (s.sitemapUrl) els.sitemapUrl.value = s.sitemapUrl;
   }
 
@@ -295,13 +319,35 @@ chrome.runtime.sendMessage({ type: "GET_STATE" }, (s) => {
 
 // ── Start ──
 els.startBtn.addEventListener("click", () => {
-  const sitemapUrl = els.sitemapUrl.value.trim();
-  if (!sitemapUrl) {
-    addLogEntry("Please enter a sitemap URL", "error");
-    return;
+  let message;
+
+  if (inputSource === "paste") {
+    const rawText = els.rawUrlsInput.value.trim();
+    if (!rawText) {
+      addLogEntry("Please paste some URLs", "error");
+      return;
+    }
+    const urls = extractUrls(rawText);
+    if (urls.length === 0) {
+      addLogEntry("No valid URLs found in pasted text", "error");
+      return;
+    }
+    const domains = new Set(urls.map((u) => new URL(u).hostname.replace(/^www\./, "")));
+    if (domains.size > 1) {
+      addLogEntry(`All URLs must be from the same domain (found: ${[...domains].join(", ")})`, "error");
+      return;
+    }
+    message = { type: "START", rawUrls: urls, mode: currentMode };
+  } else {
+    const sitemapUrl = els.sitemapUrl.value.trim();
+    if (!sitemapUrl) {
+      addLogEntry("Please enter a sitemap URL", "error");
+      return;
+    }
+    chrome.storage.local.set({ lastSitemapUrl: sitemapUrl });
+    message = { type: "START", sitemapUrl, mode: currentMode };
   }
 
-  chrome.storage.local.set({ lastSitemapUrl: sitemapUrl });
   els.logPanel.innerHTML = "";
   stats = { checked: 0, indexed: 0, requested: 0, errors: 0, remaining: 0 };
   remainingUrls = [];
@@ -310,9 +356,9 @@ els.startBtn.addEventListener("click", () => {
   setRunning(true);
   els.progressBar.classList.remove("done");
   els.progressFill.style.width = "0%";
-  setStatus("Fetching sitemap...");
+  setStatus(inputSource === "paste" ? "Preparing URLs..." : "Fetching sitemap...");
 
-  chrome.runtime.sendMessage({ type: "START", sitemapUrl, mode: currentMode }, (response) => {
+  chrome.runtime.sendMessage(message, (response) => {
     if (chrome.runtime.lastError) {
       addLogEntry(`Error: ${chrome.runtime.lastError.message}`, "error");
       setRunning(false);
@@ -353,13 +399,23 @@ els.stopBtn.addEventListener("click", () => {
 
 // ── Clear memory ──
 els.clearBtn.addEventListener("click", () => {
-  const sitemapUrl = els.sitemapUrl.value.trim();
-  if (!sitemapUrl) {
-    addLogEntry("Enter a sitemap URL first", "error");
-    return;
+  let domainUrl;
+  if (inputSource === "paste") {
+    const urls = extractUrls(els.rawUrlsInput.value.trim());
+    if (urls.length === 0) {
+      addLogEntry("Paste some URLs first", "error");
+      return;
+    }
+    domainUrl = urls[0];
+  } else {
+    domainUrl = els.sitemapUrl.value.trim();
+    if (!domainUrl) {
+      addLogEntry("Enter a sitemap URL first", "error");
+      return;
+    }
   }
-  chrome.runtime.sendMessage({ type: "CLEAR_MEMORY", sitemapUrl }, () => {
-    addLogEntry(`Cleared indexed URL memory for ${new URL(sitemapUrl).hostname}`);
+  chrome.runtime.sendMessage({ type: "CLEAR_MEMORY", sitemapUrl: domainUrl }, () => {
+    addLogEntry(`Cleared indexed URL memory for ${new URL(domainUrl).hostname}`);
   });
 });
 

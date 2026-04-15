@@ -183,9 +183,47 @@
       justify-content: flex-end;
       align-items: center;
     }
+
+    /* Source toggle */
+    .source-toggle {
+      display: flex;
+      gap: 0;
+      margin-bottom: 8px;
+    }
+    .source-toggle button {
+      padding: 4px 12px;
+      font-size: 11px;
+      font-weight: 500;
+      background: #f1f3f4;
+      color: #5f6368;
+      border: 1px solid #d0d0d0;
+      cursor: pointer;
+    }
+    .source-toggle button:first-child { border-radius: 4px 0 0 4px; }
+    .source-toggle button:last-child { border-radius: 0 4px 4px 0; border-left: none; }
+    .source-toggle button.active { background: #1a73e8; color: #fff; border-color: #1a73e8; }
+    .source-toggle button.active + button { border-left-color: #1a73e8; }
+
+    #rawUrlsInput {
+      display: none;
+      width: 100%;
+      padding: 7px 10px;
+      border: 1px solid #d0d0d0;
+      border-radius: 4px;
+      font-size: 12px;
+      font-family: "Cascadia Code", "Fira Code", monospace;
+      resize: none;
+      outline: none;
+      margin-bottom: 10px;
+    }
+    #rawUrlsInput:focus { border-color: #4285f4; }
   </style>
 </head>
 <body>
+  <div class="source-toggle">
+    <button id="srcSitemap" class="active">Sitemap</button>
+    <button id="srcPaste">Paste URLs</button>
+  </div>
   <div class="input-row">
     <input type="text" id="sitemapUrl" placeholder="Sitemap URL (e.g. https://example.com/sitemap.xml)" />
     <select id="modeSelect">
@@ -196,6 +234,7 @@
     <button id="pauseBtn">Pause</button>
     <button id="stopBtn">Stop</button>
   </div>
+  <textarea id="rawUrlsInput" rows="4" placeholder="Paste URLs here (one per line, or mixed in text)"></textarea>
 
   <div class="info-panel" id="infoPanel">
     <div class="status-line">
