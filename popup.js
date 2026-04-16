@@ -59,6 +59,7 @@ function setInputSource(source) {
   els.srcPaste.classList.toggle("active", source === "paste");
   els.sitemapUrl.style.display = source === "sitemap" ? "" : "none";
   els.rawUrlsInput.style.display = source === "paste" ? "block" : "none";
+  refreshSummaryIfOpen();
 }
 
 els.srcSitemap.addEventListener("click", () => setInputSource("sitemap"));
@@ -257,22 +258,28 @@ async function loadSitemaps() {
 }
 
 // ── Summary tab ──
-const ALL_FILTERS = ["indexed", "not_indexed", "requested"];
+const ALL_FILTERS = ["indexed", "not_indexed", "requested", "unknown"];
 let summaryState = {
   domainUrl: null,
+  inputUrls: [],
   records: {},
   filters: new Set(ALL_FILTERS),
   search: "",
   inProgressUrl: null,
   selected: new Set(),
+  loadId: 0,
 };
 
-function currentDomainUrl() {
+function currentInputSpec() {
   if (inputSource === "paste") {
     const urls = extractUrls(els.rawUrlsInput.value.trim());
-    return urls[0] || null;
+    if (urls.length === 0) return null;
+    return { rawUrls: urls, domainUrl: urls[0] };
   }
-  return els.sitemapUrl.value.trim() || null;
+  const sitemapUrl = els.sitemapUrl.value.trim();
+  if (!sitemapUrl) return null;
+  try { new URL(sitemapUrl); } catch { return null; }
+  return { sitemapUrl, domainUrl: sitemapUrl };
 }
 
 function fetchUrlStatuses(domainUrl) {
@@ -302,11 +309,12 @@ function classify(records) {
 }
 
 function classifyRecord(rec) {
+  if (!rec || (!rec.status && !rec.requestedAt)) return "unknown";
   const now = Date.now();
-  if (rec && rec.status === "indexed") return "indexed";
-  if (rec && rec.requestedAt && now - rec.requestedAt < INDEX_COOLDOWN_MS) return "requested";
-  if (rec && rec.status === "not_indexed") return "not_indexed";
-  return "not_indexed";
+  if (rec.status === "indexed") return "indexed";
+  if (rec.requestedAt && now - rec.requestedAt < INDEX_COOLDOWN_MS) return "requested";
+  if (rec.status === "not_indexed") return "not_indexed";
+  return "unknown";
 }
 
 function timeAgoShort(ts) {
@@ -329,18 +337,37 @@ function fullDateTitle(ts) {
   });
 }
 
+function fetchInputUrls(spec) {
+  return new Promise((resolve) => {
+    const msg = { type: "GET_INPUT_URLS" };
+    if (spec.rawUrls) msg.rawUrls = spec.rawUrls;
+    if (spec.sitemapUrl) msg.sitemapUrl = spec.sitemapUrl;
+    chrome.runtime.sendMessage(msg, (resp) => {
+      if (!resp || !resp.ok) {
+        resolve({ urls: [], error: resp && resp.error });
+      } else {
+        resolve({ urls: resp.urls || [] });
+      }
+    });
+  });
+}
+
 async function loadSummary() {
-  const domainUrl = currentDomainUrl();
+  const spec = currentInputSpec();
+  const domainUrl = spec ? spec.domainUrl : null;
+
   if (domainUrl !== summaryState.domainUrl) {
     summaryState.selected = new Set();
   }
   summaryState.domainUrl = domainUrl;
 
-  if (!domainUrl) {
+  if (!spec) {
+    summaryState.inputUrls = [];
+    summaryState.records = {};
     els.summaryDomain.textContent = "—";
     els.summaryTotals.textContent = "Enter a sitemap URL or paste URLs to see status";
     els.summaryList.innerHTML = '<div id="summaryEmpty">No domain selected</div>';
-    summaryState.records = {};
+    updateSelectedCount();
     return;
   }
 
@@ -349,13 +376,37 @@ async function loadSummary() {
   catch { hostname = domainUrl; }
   els.summaryDomain.textContent = hostname;
 
-  summaryState.records = await fetchUrlStatuses(domainUrl);
+  const loadId = ++summaryState.loadId;
+  if (spec.sitemapUrl) {
+    els.summaryTotals.textContent = "Loading sitemap…";
+    els.summaryList.innerHTML = '<div id="summaryEmpty">Loading…</div>';
+  }
+
+  const [inputRes, records] = await Promise.all([
+    fetchInputUrls(spec),
+    fetchUrlStatuses(domainUrl),
+  ]);
+
+  if (loadId !== summaryState.loadId) return; // stale — input changed
+
+  if (inputRes.error) {
+    const msg = escapeHtml(inputRes.error);
+    els.summaryTotals.textContent = "Could not load sitemap";
+    els.summaryList.innerHTML = `<div id="summaryEmpty">${msg}</div>`;
+    summaryState.inputUrls = [];
+    summaryState.records = records;
+    updateSelectedCount();
+    return;
+  }
+
+  summaryState.inputUrls = inputRes.urls;
+  summaryState.records = records;
   renderSummary();
 }
 
 function computeVisibleRows() {
   const records = summaryState.records;
-  const urls = Object.keys(records);
+  const urls = summaryState.inputUrls;
   const search = summaryState.search.toLowerCase();
   const filters = summaryState.filters;
   const ipUrl = summaryState.inProgressUrl;
@@ -363,10 +414,8 @@ function computeVisibleRows() {
   const rowMap = new Map(
     urls.map((u) => [u, { url: u, rec: records[u] || {}, cat: classifyRecord(records[u]) }])
   );
-  if (ipUrl) {
-    const existing = rowMap.get(ipUrl);
-    if (existing) existing.cat = "in_progress";
-    else rowMap.set(ipUrl, { url: ipUrl, rec: {}, cat: "in_progress" });
+  if (ipUrl && rowMap.has(ipUrl)) {
+    rowMap.get(ipUrl).cat = "in_progress";
   }
 
   return [...rowMap.values()]
@@ -384,20 +433,31 @@ function computeVisibleRows() {
 
 function renderSummary() {
   const records = summaryState.records;
-  const b = classify(records);
-  const total = Object.keys(records).length;
-  els.summaryTotals.innerHTML = total === 0
-    ? "No status data yet for this domain"
-    : `<span class="c-green">${b.indexed} indexed</span> &middot; ` +
-      `<span class="c-red">${b.notIndexed} not indexed</span> &middot; ` +
-      `<span class="c-blue">${b.requested} requested (pending)</span> &middot; ` +
-      `${total} total`;
+  const inputUrls = summaryState.inputUrls;
+  const total = inputUrls.length;
 
   if (total === 0) {
-    els.summaryList.innerHTML = '<div id="summaryEmpty">Run Inspect or Index on this domain to build up status records.</div>';
+    els.summaryTotals.textContent = "No URLs in current input";
+    els.summaryList.innerHTML = '<div id="summaryEmpty">Paste URLs or enter a sitemap URL above.</div>';
     updateSelectedCount();
     return;
   }
+
+  let indexed = 0, notIndexed = 0, requested = 0, unknown = 0;
+  for (const u of inputUrls) {
+    switch (classifyRecord(records[u])) {
+      case "indexed": indexed++; break;
+      case "requested": requested++; break;
+      case "not_indexed": notIndexed++; break;
+      default: unknown++;
+    }
+  }
+  els.summaryTotals.innerHTML =
+    `<span class="c-green">${indexed} indexed</span> &middot; ` +
+    `<span class="c-red">${notIndexed} not indexed</span> &middot; ` +
+    `<span class="c-blue">${requested} requested (pending)</span> &middot; ` +
+    `<span class="c-gray">${unknown} unknown</span> &middot; ` +
+    `${total} total`;
 
   const rows = computeVisibleRows();
 
@@ -411,6 +471,7 @@ function renderSummary() {
     indexed: "Indexed",
     not_indexed: "Not indexed",
     requested: "Requested",
+    unknown: "Unknown",
     in_progress: "Checking…",
   };
 
@@ -571,10 +632,23 @@ els.exportCsvBtn.addEventListener("click", () => {
     ]);
   }
   const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
-  navigator.clipboard.writeText(csv).then(
-    () => addLogEntry(`Copied ${rows.length - 1} visible rows to clipboard as CSV`, "success"),
-    () => addLogEntry("Failed to copy CSV", "error")
-  );
+
+  let hostSlug = "urls";
+  try { hostSlug = new URL(summaryState.domainUrl).hostname.replace(/^www\./, ""); } catch {}
+  const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  const fname = `gsc-status-${hostSlug}-${ts}.csv`;
+
+  const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = fname;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+  addLogEntry(`Downloaded ${rows.length - 1} rows as ${fname}`, "success");
 });
 
 // Refresh summary when user changes the input (debounced)

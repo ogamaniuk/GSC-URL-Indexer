@@ -5,7 +5,8 @@
   "description": "Bulk check and request indexing for sitemap URLs via Google Search Console.",
   "permissions": ["storage", "activeTab", "tabs", "scripting"],
   "host_permissions": [
-    "https://search.google.com/*"
+    "https://search.google.com/*",
+    "<all_urls>"
   ],
   "background": {
     "service_worker": "background.js"

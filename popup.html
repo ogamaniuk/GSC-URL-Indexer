@@ -272,6 +272,7 @@
     .status-pill.indexed { background: #e6f4ea; color: #137333; }
     .status-pill.not_indexed { background: #fce8e6; color: #c5221f; }
     .status-pill.requested { background: #e8f0fe; color: #1a73e8; }
+    .status-pill.unknown { background: #eceff1; color: #5f6368; }
     .status-pill.in_progress { background: #e8f0fe; color: #1a73e8; }
     .status-pill.in_progress::before {
       content: "";
@@ -395,12 +396,13 @@
         <button class="summary-filter" data-filter="indexed">Indexed</button>
         <button class="summary-filter" data-filter="not_indexed">Not indexed</button>
         <button class="summary-filter" data-filter="requested">Requested</button>
+        <button class="summary-filter" data-filter="unknown">Unknown</button>
         <input type="text" id="summarySearch" placeholder="Filter URLs..." />
         <button id="copySelectedBtn" class="icon-btn" title="Copy selected URLs to clipboard" aria-label="Copy selected URLs" disabled>
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
           <span class="count" id="copySelectedCount">0</span>
         </button>
-        <button id="exportCsvBtn" class="icon-btn" title="Export all as CSV to clipboard" aria-label="Export CSV">
+        <button id="exportCsvBtn" class="icon-btn" title="Download visible rows as CSV" aria-label="Download CSV">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
         </button>
       </div>

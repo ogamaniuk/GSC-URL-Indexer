@@ -28,6 +28,10 @@ const INDEX_REQUEST_COOLDOWN_DAYS = 7;
 const INSPECT_STALE_DAYS = 30;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+// Short-lived cache for sitemap URL lists, used by the Summary preview.
+const SITEMAP_CACHE_TTL_MS = 5 * 60 * 1000;
+const sitemapUrlCache = new Map();
+
 /**
  * Save run statistics persistently. Called after each URL processed.
  */
@@ -146,7 +150,13 @@ function deriveGscProperty(sitemapUrl) {
  */
 async function fetchSitemap(sitemapUrl) {
   const response = await fetch(sitemapUrl);
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status} ${response.statusText} for ${sitemapUrl}`);
+  }
   const xml = await response.text();
+  if (!xml.trim()) {
+    throw new Error(`Empty response body from ${sitemapUrl}`);
+  }
 
   // Check for sitemap index (contains <sitemap><loc>...</loc></sitemap>)
   const sitemapLocs = [...xml.matchAll(/<sitemap>\s*<loc>(.*?)<\/loc>/gs)];
@@ -628,6 +638,33 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       log(`Cleared URL status memory for ${new URL(msg.sitemapUrl).hostname}`);
       sendResponse({ ok: true });
     });
+    return true;
+  }
+
+  if (msg.type === "GET_INPUT_URLS") {
+    (async () => {
+      try {
+        if (msg.rawUrls && msg.rawUrls.length > 0) {
+          sendResponse({ ok: true, urls: msg.rawUrls });
+          return;
+        }
+        if (msg.sitemapUrl) {
+          const cached = sitemapUrlCache.get(msg.sitemapUrl);
+          if (cached && Date.now() - cached.ts < SITEMAP_CACHE_TTL_MS) {
+            sendResponse({ ok: true, urls: cached.urls });
+            return;
+          }
+          const urls = await fetchSitemap(msg.sitemapUrl);
+          sitemapUrlCache.set(msg.sitemapUrl, { urls, ts: Date.now() });
+          sendResponse({ ok: true, urls });
+          return;
+        }
+        sendResponse({ ok: true, urls: [] });
+      } catch (e) {
+        console.error("[GSC Indexer] GET_INPUT_URLS failed:", e);
+        sendResponse({ ok: false, error: e.message, urls: [] });
+      }
+    })();
     return true;
   }
 
