@@ -32,35 +32,6 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const SITEMAP_CACHE_TTL_MS = 5 * 60 * 1000;
 const sitemapUrlCache = new Map();
 
-const POPUP_W = 780;
-const POPUP_H = 680;
-
-chrome.action.onClicked.addListener(async () => {
-  const popupUrl = chrome.runtime.getURL("popup.html");
-  const all = await chrome.windows.getAll({ populate: true });
-  const existing = all.find(
-    (w) => w.type === "popup" && w.tabs && w.tabs.some((t) => t.url && t.url.startsWith(popupUrl))
-  );
-  if (existing) {
-    chrome.windows.update(existing.id, { focused: true });
-    return;
-  }
-  const current = await chrome.windows.getLastFocused().catch(() => null);
-  const baseLeft = (current && current.left) || 0;
-  const baseTop = (current && current.top) || 0;
-  const baseW = (current && current.width) || 1920;
-  const left = Math.max(0, baseLeft + baseW - POPUP_W - 20);
-  const top = Math.max(0, baseTop + 80);
-  chrome.windows.create({
-    url: popupUrl,
-    type: "popup",
-    width: POPUP_W,
-    height: POPUP_H,
-    left,
-    top,
-  });
-});
-
 /**
  * Save run statistics persistently. Called after each URL processed.
  */
