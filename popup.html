@@ -5,8 +5,8 @@
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body {
-      width: 650px;
-      height: 600px;
+      width: 780px;
+      height: 620px;
       overflow: hidden;
     }
     body {
@@ -53,11 +53,11 @@
     #modeSelect:focus { border-color: #4285f4; }
     #startBtn { background: #1a73e8; color: #fff; }
     #startBtn:hover { background: #1557b0; }
-    #pauseBtn { background: #f9ab00; color: #fff; display: none; }
+    #pauseBtn { background: #f9ab00; color: #fff; }
     #pauseBtn:hover { background: #e09800; }
-    #pauseBtn.resume { background: #34a853; }
-    #pauseBtn.resume:hover { background: #2d8e47; }
-    #stopBtn { background: #ea4335; color: #fff; display: none; }
+    #resumeBtn { background: #34a853; color: #fff; }
+    #resumeBtn:hover { background: #2d8e47; }
+    #stopBtn { background: #ea4335; color: #fff; }
     #stopBtn:hover { background: #c5221f; }
     #clearBtn { background: none; color: #5f6368; padding: 4px 8px; font-size: 11px; }
     #clearBtn:hover { color: #1a73e8; }
@@ -177,6 +177,123 @@
     .remaining-url.current { font-weight: 600; }
     .remaining-url .url-index { color: #9e9e9e; display: inline-block; width: 35px; }
 
+    /* Summary tab */
+    .summary-header {
+      padding: 8px 10px;
+      background: #f1f3f4;
+      border-bottom: 1px solid #e0e0e0;
+      font-size: 11px;
+      line-height: 1.6;
+    }
+    .summary-header .domain { font-weight: 600; color: #1a1a1a; }
+    .summary-header .totals { color: #5f6368; margin-top: 2px; }
+    .summary-controls {
+      display: flex;
+      gap: 4px;
+      padding: 6px 8px;
+      border-bottom: 1px solid #e0e0e0;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .summary-filter {
+      padding: 3px 8px;
+      font-size: 10px;
+      font-weight: 500;
+      background: #fff;
+      color: #5f6368;
+      border: 1px solid #d0d0d0;
+      border-radius: 3px;
+      cursor: pointer;
+    }
+    .summary-filter.active { background: #1a73e8; color: #fff; border-color: #1a73e8; }
+    #summarySearch {
+      flex: 1;
+      min-width: 120px;
+      padding: 4px 8px;
+      border: 1px solid #d0d0d0;
+      border-radius: 3px;
+      font-size: 11px;
+      outline: none;
+    }
+    #summarySearch:focus { border-color: #4285f4; }
+    .icon-btn {
+      padding: 3px 5px;
+      font-size: 10px;
+      background: none;
+      color: #5f6368;
+      border: 1px solid #d0d0d0;
+      border-radius: 3px;
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      line-height: 1;
+    }
+    .icon-btn:hover { color: #1a73e8; border-color: #1a73e8; }
+    .icon-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .icon-btn:disabled:hover { color: #5f6368; border-color: #d0d0d0; }
+    .icon-btn svg { width: 13px; height: 13px; fill: currentColor; }
+    .icon-btn .count { font-weight: 600; }
+    .summary-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 11px;
+      table-layout: fixed;
+    }
+    .summary-table th, .summary-table td {
+      padding: 4px 8px;
+      text-align: left;
+      border-bottom: 1px solid #f0f0f0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .summary-table th {
+      background: #fafafa;
+      color: #5f6368;
+      font-weight: 500;
+      position: sticky;
+      top: 0;
+    }
+    .summary-table td.col-url a { color: #1a73e8; }
+    .summary-table th.col-check, .summary-table td.col-check { width: 24px; text-align: center; padding: 4px 2px; }
+    .summary-table th.col-check input, .summary-table td.col-check input { cursor: pointer; margin: 0; }
+    .summary-table th.col-url, .summary-table td.col-url { width: 50%; }
+    .summary-table th.col-status, .summary-table td.col-status { width: 90px; }
+    .summary-table th.col-checked, .summary-table td.col-checked,
+    .summary-table th.col-indexed, .summary-table td.col-indexed,
+    .summary-table th.col-requested, .summary-table td.col-requested { width: 70px; color: #5f6368; }
+    .status-pill {
+      display: inline-block;
+      padding: 1px 6px;
+      border-radius: 8px;
+      font-size: 10px;
+      font-weight: 500;
+    }
+    .status-pill.indexed { background: #e6f4ea; color: #137333; }
+    .status-pill.not_indexed { background: #fce8e6; color: #c5221f; }
+    .status-pill.requested { background: #e8f0fe; color: #1a73e8; }
+    .status-pill.in_progress { background: #e8f0fe; color: #1a73e8; }
+    .status-pill.in_progress::before {
+      content: "";
+      display: inline-block;
+      width: 7px;
+      height: 7px;
+      border: 2px solid #1a73e8;
+      border-top-color: transparent;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      margin-right: 4px;
+      vertical-align: middle;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .summary-table tr.in-progress { background: #f0f7ff; }
+    #summaryEmpty { padding: 20px; color: #9e9e9e; text-align: center; }
+    #summaryList {
+      height: 100%;
+      overflow-y: auto;
+    }
+    .sitemap-entry .sitemap-breakdown { font-size: 10px; color: #3c4043; margin-top: 2px; }
+
     .footer {
       margin-top: 6px;
       display: flex;
@@ -187,26 +304,32 @@
     /* Source toggle */
     .source-toggle {
       display: flex;
-      gap: 0;
+      gap: 8px;
       margin-bottom: 8px;
+      align-items: center;
     }
-    .source-toggle button {
-      padding: 4px 12px;
-      font-size: 11px;
+    .source-toggle-group {
+      display: flex;
+      gap: 0;
+    }
+    .source-toggle-group button {
+      padding: 7px 16px;
+      font-size: 13px;
       font-weight: 500;
       background: #f1f3f4;
       color: #5f6368;
       border: 1px solid #d0d0d0;
       cursor: pointer;
     }
-    .source-toggle button:first-child { border-radius: 4px 0 0 4px; }
-    .source-toggle button:last-child { border-radius: 0 4px 4px 0; border-left: none; }
-    .source-toggle button.active { background: #1a73e8; color: #fff; border-color: #1a73e8; }
-    .source-toggle button.active + button { border-left-color: #1a73e8; }
+    .source-toggle .actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+    .source-toggle-group button:first-child { border-radius: 4px 0 0 4px; }
+    .source-toggle-group button:last-child { border-radius: 0 4px 4px 0; border-left: none; }
+    .source-toggle-group button.active { background: #1a73e8; color: #fff; border-color: #1a73e8; }
+    .source-toggle-group button.active + button { border-left-color: #1a73e8; }
 
     #rawUrlsInput {
       display: none;
-      width: 100%;
+      flex: 1;
       padding: 7px 10px;
       border: 1px solid #d0d0d0;
       border-radius: 4px;
@@ -214,27 +337,31 @@
       font-family: "Cascadia Code", "Fira Code", monospace;
       resize: none;
       outline: none;
-      margin-bottom: 10px;
     }
     #rawUrlsInput:focus { border-color: #4285f4; }
   </style>
 </head>
 <body>
   <div class="source-toggle">
-    <button id="srcSitemap" class="active">Sitemap</button>
-    <button id="srcPaste">Paste URLs</button>
+    <div class="source-toggle-group">
+      <button id="srcSitemap" class="active">Sitemap</button>
+      <button id="srcPaste">Paste URLs</button>
+    </div>
+    <div class="actions">
+      <select id="modeSelect">
+        <option value="index">Index</option>
+        <option value="inspect">Inspect</option>
+      </select>
+      <button id="startBtn">Start</button>
+      <button id="pauseBtn" style="display:none;">Pause</button>
+      <button id="resumeBtn" style="display:none;">Resume</button>
+      <button id="stopBtn" style="display:none;">Stop</button>
+    </div>
   </div>
   <div class="input-row">
     <input type="text" id="sitemapUrl" placeholder="Sitemap URL (e.g. https://example.com/sitemap.xml)" />
-    <select id="modeSelect">
-      <option value="index">Index</option>
-      <option value="inspect">Inspect</option>
-    </select>
-    <button id="startBtn">Start</button>
-    <button id="pauseBtn">Pause</button>
-    <button id="stopBtn">Stop</button>
+    <textarea id="rawUrlsInput" rows="4" placeholder="Paste URLs here (one per line, or mixed in text)"></textarea>
   </div>
-  <textarea id="rawUrlsInput" rows="4" placeholder="Paste URLs here (one per line, or mixed in text)"></textarea>
 
   <div class="info-panel" id="infoPanel">
     <div class="status-line">
@@ -251,14 +378,41 @@
   <div class="tabs">
     <div class="tab active" data-tab="log">Logs</div>
     <div class="tab" data-tab="remaining">Remaining (<span id="remainingCount">0</span>)</div>
+    <div class="tab" data-tab="summary">Summary</div>
     <div class="tab" data-tab="sitemaps">Sitemaps</div>
   </div>
 
   <div class="tab-content">
     <div id="logPanel" class="tab-panel active"></div>
     <div id="remainingPanel" class="tab-panel"></div>
+    <div id="summaryPanel" class="tab-panel" style="display:none;flex-direction:column;background:#fafafa;border:1px solid #e0e0e0;border-top:none;border-radius:0 0 4px 4px;">
+      <div class="summary-header">
+        <div class="domain" id="summaryDomain">—</div>
+        <div class="totals" id="summaryTotals">No data yet</div>
+      </div>
+      <div class="summary-controls">
+        <button class="summary-filter active" data-filter="all">All</button>
+        <button class="summary-filter" data-filter="indexed">Indexed</button>
+        <button class="summary-filter" data-filter="not_indexed">Not indexed</button>
+        <button class="summary-filter" data-filter="requested">Requested</button>
+        <input type="text" id="summarySearch" placeholder="Filter URLs..." />
+        <button id="copySelectedBtn" class="icon-btn" title="Copy selected URLs to clipboard" aria-label="Copy selected URLs" disabled>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+          <span class="count" id="copySelectedCount">0</span>
+        </button>
+        <button id="exportCsvBtn" class="icon-btn" title="Export all as CSV to clipboard" aria-label="Export CSV">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+        </button>
+      </div>
+      <div id="summaryList"></div>
+    </div>
     <div id="sitemapsPanel" class="tab-panel"></div>
   </div>
+  <style>
+    #summaryPanel.active { display: flex !important; }
+    #summaryPanel .summary-header, #summaryPanel .summary-controls { flex: 0 0 auto; }
+    #summaryPanel #summaryList { flex: 1 1 auto; }
+  </style>
 
   <div class="footer">
     <button id="clearBtn">Clear memory</button>

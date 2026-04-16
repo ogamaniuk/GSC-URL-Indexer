@@ -21,6 +21,13 @@ let state = {
 const REQUEST_DELAY_MS = 5000;
 const MAX_LOGS = 500;
 
+// Skip re-requesting indexing for URLs requested within this window
+// (indexing can take days; re-requesting wastes the 10/day quota).
+const INDEX_REQUEST_COOLDOWN_DAYS = 7;
+// Skip re-inspecting URLs whose status was last observed within this window.
+const INSPECT_STALE_DAYS = 30;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 /**
  * Save run statistics persistently. Called after each URL processed.
  */
@@ -44,7 +51,7 @@ async function trackQuotaUsage(type) {
   const data = await chrome.storage.local.get("dailyQuota");
   const quota = data.dailyQuota || { date: periodId, checks: 0, indexRequests: 0 };
 
-  // Reset if new quota period (2 PM Pacific)
+  // Reset if new quota period (1 PM Pacific)
   if (quota.date !== periodId) {
     quota.date = periodId;
     quota.checks = 0;
@@ -380,9 +387,17 @@ async function processQueue() {
       // Broadcast updated meta to popup
       broadcastProgress({ status: "meta_update", runStats, dailyQuota: quota });
 
-      // Save to storage if confirmed indexed (or indexing requested in index mode)
-      if (result.action === "already_indexed" || (state.mode === "index" && result.action === "requested_indexing")) {
-        await Storage.saveIndexedUrl(state.sitemapUrl, url);
+      // Persist status record based on what we observed.
+      if (result.action === "already_indexed") {
+        await Storage.saveUrlStatus(state.sitemapUrl, url, { status: "indexed" });
+      } else if (result.action === "not_indexed") {
+        await Storage.saveUrlStatus(state.sitemapUrl, url, { status: "not_indexed" });
+      } else if (result.action === "requested_indexing") {
+        // Not confirmed indexed yet — just mark that we requested.
+        await Storage.saveUrlStatus(state.sitemapUrl, url, {
+          status: "not_indexed",
+          requestedAt: Date.now(),
+        });
       }
 
       broadcastProgress({
@@ -484,12 +499,40 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           await trackSitemapHistory(msg.sitemapUrl, allUrls.length);
         }
 
-        // Filter already indexed
-        const indexed = await Storage.getIndexedUrls(state.sitemapUrl);
-        state.queue = allUrls.filter((u) => !indexed.has(u));
-        state.alreadyDone = indexed.size;
+        // Filter based on stored status records.
+        const records = await Storage.getUrlStatuses(state.sitemapUrl);
+        const now = Date.now();
+        const cooldownMs = INDEX_REQUEST_COOLDOWN_DAYS * DAY_MS;
+        const staleMs = INSPECT_STALE_DAYS * DAY_MS;
+        let skippedIndexed = 0;
+        let skippedRequested = 0;
+        let skippedFresh = 0;
 
-        log(`${allUrls.length} URLs total, ${indexed.size} already done, ${state.queue.length} to process`);
+        state.queue = allUrls.filter((u) => {
+          const rec = records[u];
+          if (!rec) return true; // never seen → process
+          if (state.mode === "index") {
+            if (rec.status === "indexed") { skippedIndexed++; return false; }
+            if (rec.requestedAt && now - rec.requestedAt < cooldownMs) {
+              skippedRequested++; return false;
+            }
+            return true;
+          }
+          // inspect mode
+          if (rec.checkedAt && now - rec.checkedAt < staleMs) {
+            skippedFresh++; return false;
+          }
+          return true;
+        });
+        state.alreadyDone = skippedIndexed + skippedRequested + skippedFresh;
+        state.skipCounts = { skippedIndexed, skippedRequested, skippedFresh };
+
+        const skipParts = [];
+        if (skippedIndexed) skipParts.push(`${skippedIndexed} known indexed`);
+        if (skippedRequested) skipParts.push(`${skippedRequested} recently requested`);
+        if (skippedFresh) skipParts.push(`${skippedFresh} fresh`);
+        const skipSummary = skipParts.length ? ` (skipped: ${skipParts.join(", ")})` : "";
+        log(`${allUrls.length} URLs total, ${state.queue.length} to process${skipSummary}`);
 
         // Update last run timestamp immediately
         const data = await chrome.storage.local.get("runStats");
@@ -499,9 +542,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
         broadcastProgress({
           status: "ready",
-          totalInSitemap: allUrls.length,
-          alreadyIndexed: indexed.size,
+          alreadyIndexed: state.alreadyDone,
           toProcess: state.queue.length,
+          skipCounts: state.skipCounts,
         });
 
         updateBadge();
@@ -581,10 +624,22 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.type === "CLEAR_MEMORY") {
-    Storage.clearIndexedUrls(msg.sitemapUrl).then(() => {
-      log(`Cleared indexed URL memory for ${new URL(msg.sitemapUrl).hostname}`);
+    Storage.clearUrlStatuses(msg.sitemapUrl).then(() => {
+      log(`Cleared URL status memory for ${new URL(msg.sitemapUrl).hostname}`);
       sendResponse({ ok: true });
     });
+    return true;
+  }
+
+  if (msg.type === "GET_URL_STATUSES") {
+    (async () => {
+      try {
+        const records = await Storage.getUrlStatuses(msg.domainUrl);
+        sendResponse({ ok: true, records });
+      } catch (e) {
+        sendResponse({ ok: false, error: e.message, records: {} });
+      }
+    })();
     return true;
   }
 });
