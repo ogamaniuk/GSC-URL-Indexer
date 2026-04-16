@@ -5,8 +5,9 @@
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body {
-      width: 780px;
-      height: 620px;
+      width: 100%;
+      height: 100%;
+      min-width: 640px;
       overflow: hidden;
     }
     body {
@@ -57,8 +58,6 @@
     #pauseBtn:hover { background: #e09800; }
     #resumeBtn { background: #34a853; color: #fff; }
     #resumeBtn:hover { background: #2d8e47; }
-    #stopBtn { background: #ea4335; color: #fff; }
-    #stopBtn:hover { background: #c5221f; }
     #clearBtn { background: none; color: #5f6368; padding: 4px 8px; font-size: 11px; }
     #clearBtn:hover { color: #1a73e8; }
 
@@ -206,6 +205,7 @@
       cursor: pointer;
     }
     .summary-filter.active { background: #1a73e8; color: #fff; border-color: #1a73e8; }
+    .summary-filter .filter-count { opacity: 0.7; margin-left: 2px; font-weight: 600; }
     #summarySearch {
       flex: 1;
       min-width: 120px;
@@ -356,7 +356,6 @@
       <button id="startBtn">Start</button>
       <button id="pauseBtn" style="display:none;">Pause</button>
       <button id="resumeBtn" style="display:none;">Resume</button>
-      <button id="stopBtn" style="display:none;">Stop</button>
     </div>
   </div>
   <div class="input-row">
@@ -377,26 +376,26 @@
   </div>
 
   <div class="tabs">
-    <div class="tab active" data-tab="log">Logs</div>
+    <div class="tab active" data-tab="summary">Summary</div>
+    <div class="tab" data-tab="log">Logs</div>
     <div class="tab" data-tab="remaining">Remaining (<span id="remainingCount">0</span>)</div>
-    <div class="tab" data-tab="summary">Summary</div>
     <div class="tab" data-tab="sitemaps">Sitemaps</div>
   </div>
 
   <div class="tab-content">
-    <div id="logPanel" class="tab-panel active"></div>
+    <div id="logPanel" class="tab-panel"></div>
     <div id="remainingPanel" class="tab-panel"></div>
-    <div id="summaryPanel" class="tab-panel" style="display:none;flex-direction:column;background:#fafafa;border:1px solid #e0e0e0;border-top:none;border-radius:0 0 4px 4px;">
+    <div id="summaryPanel" class="tab-panel active" style="display:none;flex-direction:column;background:#fafafa;border:1px solid #e0e0e0;border-top:none;border-radius:0 0 4px 4px;">
       <div class="summary-header">
         <div class="domain" id="summaryDomain">—</div>
         <div class="totals" id="summaryTotals">No data yet</div>
       </div>
       <div class="summary-controls">
-        <button class="summary-filter active" data-filter="all">All</button>
-        <button class="summary-filter" data-filter="indexed">Indexed</button>
-        <button class="summary-filter" data-filter="not_indexed">Not indexed</button>
-        <button class="summary-filter" data-filter="requested">Requested</button>
-        <button class="summary-filter" data-filter="unknown">Unknown</button>
+        <button class="summary-filter active" data-filter="all">All <span class="filter-count" data-count="all">0</span></button>
+        <button class="summary-filter" data-filter="indexed">Indexed <span class="filter-count" data-count="indexed">0</span></button>
+        <button class="summary-filter" data-filter="not_indexed">Not indexed <span class="filter-count" data-count="not_indexed">0</span></button>
+        <button class="summary-filter" data-filter="requested">Requested <span class="filter-count" data-count="requested">0</span></button>
+        <button class="summary-filter" data-filter="unknown">Unknown <span class="filter-count" data-count="unknown">0</span></button>
         <input type="text" id="summarySearch" placeholder="Filter URLs..." />
         <button id="copySelectedBtn" class="icon-btn" title="Copy selected URLs to clipboard" aria-label="Copy selected URLs" disabled>
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>

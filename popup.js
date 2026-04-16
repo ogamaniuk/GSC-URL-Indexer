@@ -6,7 +6,6 @@ const els = {
   startBtn: $("startBtn"),
   pauseBtn: $("pauseBtn"),
   resumeBtn: $("resumeBtn"),
-  stopBtn: $("stopBtn"),
   clearBtn: $("clearBtn"),
   labelRequested: $("labelRequested"),
   logPanel: $("logPanel"),
@@ -263,12 +262,21 @@ let summaryState = {
   domainUrl: null,
   inputUrls: [],
   records: {},
+  recordsByCanonical: new Map(),
   filters: new Set(ALL_FILTERS),
   search: "",
   inProgressUrl: null,
   selected: new Set(),
   loadId: 0,
 };
+
+function indexRecordsByCanonical(records) {
+  const map = new Map();
+  for (const [u, rec] of Object.entries(records)) {
+    map.set(canonicalUrl(u), rec);
+  }
+  return map;
+}
 
 function currentInputSpec() {
   if (inputSource === "paste") {
@@ -315,6 +323,28 @@ function classifyRecord(rec) {
   if (rec.requestedAt && now - rec.requestedAt < INDEX_COOLDOWN_MS) return "requested";
   if (rec.status === "not_indexed") return "not_indexed";
   return "unknown";
+}
+
+// Normalize a URL so trivial differences (trailing slash, www, hostname case,
+// fragment) don't cause missed lookups between stored records and input URLs.
+function canonicalUrl(u) {
+  try {
+    const url = new URL(u);
+    url.hostname = url.hostname.toLowerCase().replace(/^www\./, "");
+    if (url.pathname !== "/" && url.pathname.endsWith("/")) {
+      url.pathname = url.pathname.slice(0, -1);
+    }
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return u;
+  }
+}
+
+function getRecord(url) {
+  const direct = summaryState.records[url];
+  if (direct) return direct;
+  return summaryState.recordsByCanonical.get(canonicalUrl(url));
 }
 
 function timeAgoShort(ts) {
@@ -364,6 +394,7 @@ async function loadSummary() {
   if (!spec) {
     summaryState.inputUrls = [];
     summaryState.records = {};
+    summaryState.recordsByCanonical = new Map();
     els.summaryDomain.textContent = "—";
     els.summaryTotals.textContent = "Enter a sitemap URL or paste URLs to see status";
     els.summaryList.innerHTML = '<div id="summaryEmpty">No domain selected</div>';
@@ -395,24 +426,28 @@ async function loadSummary() {
     els.summaryList.innerHTML = `<div id="summaryEmpty">${msg}</div>`;
     summaryState.inputUrls = [];
     summaryState.records = records;
+    summaryState.recordsByCanonical = indexRecordsByCanonical(records);
     updateSelectedCount();
     return;
   }
 
   summaryState.inputUrls = inputRes.urls;
   summaryState.records = records;
+  summaryState.recordsByCanonical = indexRecordsByCanonical(records);
   renderSummary();
 }
 
 function computeVisibleRows() {
-  const records = summaryState.records;
   const urls = summaryState.inputUrls;
   const search = summaryState.search.toLowerCase();
   const filters = summaryState.filters;
   const ipUrl = summaryState.inProgressUrl;
 
   const rowMap = new Map(
-    urls.map((u) => [u, { url: u, rec: records[u] || {}, cat: classifyRecord(records[u]) }])
+    urls.map((u) => {
+      const rec = getRecord(u) || {};
+      return [u, { url: u, rec, cat: classifyRecord(rec) }];
+    })
   );
   if (ipUrl && rowMap.has(ipUrl)) {
     rowMap.get(ipUrl).cat = "in_progress";
@@ -431,12 +466,24 @@ function computeVisibleRows() {
     });
 }
 
+function updateFilterCounts(counts) {
+  const set = (k, v) => {
+    const el = document.querySelector(`.filter-count[data-count="${k}"]`);
+    if (el) el.textContent = v;
+  };
+  set("all", counts.total);
+  set("indexed", counts.indexed);
+  set("not_indexed", counts.notIndexed);
+  set("requested", counts.requested);
+  set("unknown", counts.unknown);
+}
+
 function renderSummary() {
-  const records = summaryState.records;
   const inputUrls = summaryState.inputUrls;
   const total = inputUrls.length;
 
   if (total === 0) {
+    updateFilterCounts({ total: 0, indexed: 0, notIndexed: 0, requested: 0, unknown: 0 });
     els.summaryTotals.textContent = "No URLs in current input";
     els.summaryList.innerHTML = '<div id="summaryEmpty">Paste URLs or enter a sitemap URL above.</div>';
     updateSelectedCount();
@@ -445,13 +492,14 @@ function renderSummary() {
 
   let indexed = 0, notIndexed = 0, requested = 0, unknown = 0;
   for (const u of inputUrls) {
-    switch (classifyRecord(records[u])) {
+    switch (classifyRecord(getRecord(u))) {
       case "indexed": indexed++; break;
       case "requested": requested++; break;
       case "not_indexed": notIndexed++; break;
       default: unknown++;
     }
   }
+  updateFilterCounts({ total, indexed, notIndexed, requested, unknown });
   els.summaryTotals.innerHTML =
     `<span class="c-green">${indexed} indexed</span> &middot; ` +
     `<span class="c-red">${notIndexed} not indexed</span> &middot; ` +
@@ -539,6 +587,18 @@ function refreshSummaryIfOpen() {
 
 function rerenderSummaryIfOpen() {
   if (els.summaryPanel.classList.contains("active")) renderSummary();
+}
+
+// Light refresh: re-read stored records only, keep inputUrls in place.
+// Used during live runs so the row for the finished URL updates without
+// flashing "Loading…" or rebuilding the table from scratch.
+async function refreshSummaryRecordsIfOpen() {
+  if (!els.summaryPanel.classList.contains("active")) return;
+  if (!summaryState.domainUrl) return;
+  const records = await fetchUrlStatuses(summaryState.domainUrl);
+  summaryState.records = records;
+  summaryState.recordsByCanonical = indexRecordsByCanonical(records);
+  renderSummary();
 }
 
 function updateFilterButtonStates() {
@@ -679,7 +739,6 @@ els.modeSelect.addEventListener("change", () => {
 // ── Running state ──
 function setRunning(running) {
   els.startBtn.style.display = running ? "none" : "inline-block";
-  els.stopBtn.style.display = running ? "inline-block" : "none";
   els.sitemapUrl.disabled = running;
   els.rawUrlsInput.disabled = running;
   els.modeSelect.disabled = running;
@@ -701,6 +760,8 @@ chrome.storage.local.get("lastSitemapUrl", (data) => {
   if (data.lastSitemapUrl) {
     els.sitemapUrl.value = data.lastSitemapUrl;
   }
+  // Summary is the default active tab — populate it on popup open.
+  loadSummary();
 });
 
 chrome.runtime.sendMessage({ type: "GET_STATE" }, (s) => {
@@ -826,13 +887,6 @@ els.resumeBtn.addEventListener("click", () => {
   setStatus("Resuming...");
 });
 
-// ── Stop ──
-els.stopBtn.addEventListener("click", () => {
-  chrome.runtime.sendMessage({ type: "STOP" });
-  setRunning(false);
-  setStatus(`Stopped — ${stats.remaining} remaining`);
-});
-
 // ── Clear memory ──
 els.clearBtn.addEventListener("click", () => {
   let domainUrl;
@@ -905,7 +959,7 @@ chrome.runtime.onMessage.addListener((msg) => {
       stats.remaining = msg.total - msg.index - 1;
       updateInfo();
       summaryState.inProgressUrl = null;
-      refreshSummaryIfOpen();
+      refreshSummaryRecordsIfOpen();
       break;
     }
 
