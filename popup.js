@@ -448,6 +448,8 @@ async function loadSummary() {
     summaryState.inputUrls = Object.keys(records).sort();
     summaryState.records = records;
     summaryState.recordsByCanonical = indexRecordsByCanonical(records);
+    summaryState.sitemapCount = 0;
+    summaryState.extraStoredCount = 0;
     renderSummary();
     return;
   }
@@ -487,7 +489,18 @@ async function loadSummary() {
     return;
   }
 
-  summaryState.inputUrls = inputRes.urls;
+  // Union sitemap/paste URLs with everything we've ever stored for this
+  // domain. URLs only in the sitemap (no record yet) classify as "unknown"
+  // automatically via classifyRecord. URLs only in storage (e.g. imported
+  // from GSC and not in the sitemap) appear too, so the user sees the full
+  // picture rather than just the sitemap subset.
+  const inputCanonical = new Set(inputRes.urls.map(canonicalUrl));
+  const extras = Object.keys(records).filter(
+    (k) => !inputCanonical.has(canonicalUrl(k))
+  );
+  summaryState.inputUrls = [...inputRes.urls, ...extras];
+  summaryState.sitemapCount = inputRes.urls.length;
+  summaryState.extraStoredCount = extras.length;
   summaryState.records = records;
   summaryState.recordsByCanonical = indexRecordsByCanonical(records);
   renderSummary();
@@ -566,12 +579,16 @@ function renderSummary() {
   const scopedTotal = scopedUrls.length;
   updateFilterCounts({ total: scopedTotal, indexed, notIndexed, requested, unknown });
   const filterNote = search ? ` (filtered from ${total})` : "";
+  const sitemapNote =
+    summaryState.sitemapCount && summaryState.extraStoredCount
+      ? ` &middot; <span class="c-gray">${summaryState.sitemapCount} from sitemap + ${summaryState.extraStoredCount} extra stored</span>`
+      : "";
   els.summaryTotals.innerHTML =
     `<span class="c-green">${indexed} indexed</span> &middot; ` +
     `<span class="c-red">${notIndexed} not indexed</span> &middot; ` +
     `<span class="c-blue">${requested} requested (pending)</span> &middot; ` +
     `<span class="c-gray">${unknown} unknown</span> &middot; ` +
-    `${scopedTotal} total${filterNote}`;
+    `${scopedTotal} total${filterNote}${sitemapNote}`;
 
   const rows = computeVisibleRows();
 
