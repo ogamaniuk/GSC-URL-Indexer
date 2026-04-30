@@ -4,11 +4,15 @@ const els = {
   sitemapUrl: $("sitemapUrl"),
   modeSelect: $("modeSelect"),
   startBtn: $("startBtn"),
+  importGscBtn: $("importGscBtn"),
   pauseBtn: $("pauseBtn"),
   resumeBtn: $("resumeBtn"),
   clearBtn: $("clearBtn"),
   labelRequested: $("labelRequested"),
   logPanel: $("logPanel"),
+  logEntries: $("logEntries"),
+  copyLogBtn: $("copyLogBtn"),
+  clearLogBtn: $("clearLogBtn"),
   remainingPanel: $("remainingPanel"),
   sitemapsPanel: $("sitemapsPanel"),
   summaryPanel: $("summaryPanel"),
@@ -114,15 +118,45 @@ function formatTime(ts) {
 const MAX_LOG_ENTRIES = 200;
 
 function addLogEntry(text, level = "info", time = null) {
+  const host = els.logEntries || els.logPanel;
   const entry = document.createElement("div");
   entry.className = `log-entry ${level}`;
   const timeStr = formatTime(time || Date.now());
+  entry.dataset.time = timeStr;
+  entry.dataset.text = text;
   entry.innerHTML = `<span class="log-time">${timeStr}</span>${linkifyUrls(escapeHtml(text))}`;
-  els.logPanel.appendChild(entry);
-  while (els.logPanel.children.length > MAX_LOG_ENTRIES) {
-    els.logPanel.removeChild(els.logPanel.firstChild);
+  host.appendChild(entry);
+  while (host.children.length > MAX_LOG_ENTRIES) {
+    host.removeChild(host.firstChild);
   }
   els.logPanel.scrollTop = els.logPanel.scrollHeight;
+}
+
+if (els.copyLogBtn) {
+  els.copyLogBtn.addEventListener("click", async () => {
+    const host = els.logEntries || els.logPanel;
+    const lines = Array.from(host.querySelectorAll(".log-entry")).map((e) => {
+      const t = e.dataset.time || "";
+      const txt = e.dataset.text || e.textContent.trim();
+      return t ? `${t}\t${txt}` : txt;
+    });
+    const text = lines.join("\n");
+    try {
+      await navigator.clipboard.writeText(text);
+      const orig = els.copyLogBtn.textContent;
+      els.copyLogBtn.textContent = `Copied ${lines.length} lines`;
+      setTimeout(() => { els.copyLogBtn.textContent = orig; }, 1500);
+    } catch (e) {
+      addLogEntry(`Copy failed: ${e.message}`, "error");
+    }
+  });
+}
+
+if (els.clearLogBtn) {
+  els.clearLogBtn.addEventListener("click", () => {
+    const host = els.logEntries || els.logPanel;
+    host.innerHTML = "";
+  });
 }
 
 function escapeHtml(str) {
@@ -384,23 +418,45 @@ function fetchInputUrls(spec) {
 
 async function loadSummary() {
   const spec = currentInputSpec();
-  const domainUrl = spec ? spec.domainUrl : null;
 
+  // No sitemap/paste input → show the complete stored picture for the most
+  // recently used domain (everything we've ever recorded, including URLs
+  // imported from GSC that aren't in any sitemap).
+  if (!spec) {
+    const data = await chrome.storage.local.get("lastSitemapUrl");
+    const fallbackDomainUrl = data.lastSitemapUrl || null;
+    summaryState.domainUrl = fallbackDomainUrl;
+    summaryState.selected = new Set();
+
+    if (!fallbackDomainUrl) {
+      summaryState.inputUrls = [];
+      summaryState.records = {};
+      summaryState.recordsByCanonical = new Map();
+      els.summaryDomain.textContent = "—";
+      els.summaryTotals.textContent = "Enter a sitemap URL or paste URLs to see status";
+      els.summaryList.innerHTML = '<div id="summaryEmpty">No domain selected</div>';
+      updateSelectedCount();
+      return;
+    }
+
+    let hostname;
+    try { hostname = new URL(fallbackDomainUrl).hostname.replace(/^www\./, ""); }
+    catch { hostname = fallbackDomainUrl; }
+    els.summaryDomain.textContent = `${hostname} (all stored)`;
+
+    const records = await fetchUrlStatuses(fallbackDomainUrl);
+    summaryState.inputUrls = Object.keys(records).sort();
+    summaryState.records = records;
+    summaryState.recordsByCanonical = indexRecordsByCanonical(records);
+    renderSummary();
+    return;
+  }
+
+  const domainUrl = spec.domainUrl;
   if (domainUrl !== summaryState.domainUrl) {
     summaryState.selected = new Set();
   }
   summaryState.domainUrl = domainUrl;
-
-  if (!spec) {
-    summaryState.inputUrls = [];
-    summaryState.records = {};
-    summaryState.recordsByCanonical = new Map();
-    els.summaryDomain.textContent = "—";
-    els.summaryTotals.textContent = "Enter a sitemap URL or paste URLs to see status";
-    els.summaryList.innerHTML = '<div id="summaryEmpty">No domain selected</div>';
-    updateSelectedCount();
-    return;
-  }
 
   let hostname;
   try { hostname = new URL(domainUrl).hostname.replace(/^www\./, ""); }
@@ -490,8 +546,16 @@ function renderSummary() {
     return;
   }
 
+  // Scope counts to URLs matching the search filter (so the status pills
+  // reflect what the user is currently looking at). Status filters still only
+  // affect the rendered rows below.
+  const search = summaryState.search.toLowerCase();
+  const scopedUrls = search
+    ? inputUrls.filter((u) => u.toLowerCase().includes(search))
+    : inputUrls;
+
   let indexed = 0, notIndexed = 0, requested = 0, unknown = 0;
-  for (const u of inputUrls) {
+  for (const u of scopedUrls) {
     switch (classifyRecord(getRecord(u))) {
       case "indexed": indexed++; break;
       case "requested": requested++; break;
@@ -499,13 +563,15 @@ function renderSummary() {
       default: unknown++;
     }
   }
-  updateFilterCounts({ total, indexed, notIndexed, requested, unknown });
+  const scopedTotal = scopedUrls.length;
+  updateFilterCounts({ total: scopedTotal, indexed, notIndexed, requested, unknown });
+  const filterNote = search ? ` (filtered from ${total})` : "";
   els.summaryTotals.innerHTML =
     `<span class="c-green">${indexed} indexed</span> &middot; ` +
     `<span class="c-red">${notIndexed} not indexed</span> &middot; ` +
     `<span class="c-blue">${requested} requested (pending)</span> &middot; ` +
     `<span class="c-gray">${unknown} unknown</span> &middot; ` +
-    `${total} total`;
+    `${scopedTotal} total${filterNote}`;
 
   const rows = computeVisibleRows();
 
@@ -847,7 +913,7 @@ els.startBtn.addEventListener("click", () => {
     message = { type: "START", sitemapUrl, mode: currentMode };
   }
 
-  els.logPanel.innerHTML = "";
+  (els.logEntries || els.logPanel).innerHTML = "";
   stats = { checked: 0, indexed: 0, requested: 0, errors: 0, remaining: 0 };
   remainingUrls = [];
   updateInfo();
@@ -870,6 +936,53 @@ els.startBtn.addEventListener("click", () => {
       setStatus("Error");
     }
   });
+});
+
+// ── Import from GSC ──
+const GSC_PERF_RE = /^https:\/\/search\.google\.com\/(u\/\d+\/)?search-console\/performance\/search-analytics/;
+
+async function refreshImportGscButton() {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const ok = tab && tab.url && GSC_PERF_RE.test(tab.url);
+    els.importGscBtn.disabled = !ok;
+    els.importGscBtn.title = ok
+      ? "Scrape page URLs from this GSC Performance tab and mark them as Indexed"
+      : "Open a GSC Performance page to enable";
+    els.importGscBtn._activeTab = ok ? tab : null;
+  } catch {
+    els.importGscBtn.disabled = true;
+  }
+}
+refreshImportGscButton();
+
+els.importGscBtn.addEventListener("click", () => {
+  const tab = els.importGscBtn._activeTab;
+  if (!tab) return;
+  (els.logEntries || els.logPanel).innerHTML = "";
+  addLogEntry(`Importing indexed URLs from GSC tab ${tab.id}`);
+  els.importGscBtn.disabled = true;
+  chrome.runtime.sendMessage(
+    { type: "IMPORT_FROM_GSC", tabId: tab.id, currentUrl: tab.url },
+    (response) => {
+      els.importGscBtn.disabled = false;
+      if (chrome.runtime.lastError) {
+        addLogEntry(`Error: ${chrome.runtime.lastError.message}`, "error");
+        return;
+      }
+      if (!response || !response.ok) {
+        addLogEntry(`Error: ${(response && response.error) || "unknown"}`, "error");
+        return;
+      }
+      addLogEntry(
+        `Import done — ${response.urlCount} URLs marked indexed ` +
+        `(${response.newlyIndexed} newly, ${response.flippedFromNotIndexed} flipped, ` +
+        `${response.alreadyIndexed} already, ${response.fromUnknown} from unknown)`,
+        "success"
+      );
+      refreshSummaryIfOpen && refreshSummaryIfOpen();
+    }
+  );
 });
 
 // ── Pause / Resume ──

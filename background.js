@@ -479,6 +479,261 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// ─── GSC Performance import ───────────────────────────────────────────────
+
+let gscImport = null; // { tabId, urlsCollected, started }
+
+function ymd(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}${m}${d}`;
+}
+
+function rewriteGscPerformanceUrl(currentUrl) {
+  const u = new URL(currentUrl);
+  const today = new Date();
+  const start = new Date(today.getTime() - 90 * 24 * 60 * 60 * 1000);
+  u.searchParams.set("start_date", ymd(start));
+  u.searchParams.set("end_date", ymd(today));
+  u.searchParams.set("breakdown", "page");
+  return u.toString();
+}
+
+async function waitForTabComplete(tabId, timeoutMs = 60000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const tab = await chrome.tabs.get(tabId);
+    if (tab.status === "complete") return;
+    await sleep(500);
+  }
+  throw new Error("Tab did not finish loading");
+}
+
+async function importFromGsc(tabId, currentUrl) {
+  if (gscImport) throw new Error("Another GSC import is already running");
+
+  log(`Starting GSC Performance import from tab ${tabId}`);
+
+  gscImport = {
+    tabId,
+    urlsCollected: [],
+    completePromise: null,
+    resolveComplete: null,
+    rejectComplete: null,
+  };
+  gscImport.completePromise = new Promise((resolve, reject) => {
+    gscImport.resolveComplete = resolve;
+    gscImport.rejectComplete = reject;
+  });
+
+  // Only reload if end_date isn't already today — the user may have set their
+  // own filters/date range, and reloading would wipe in-page UI state.
+  const today = ymd(new Date());
+  const cur = new URL(currentUrl);
+  if (cur.searchParams.get("end_date") !== today) {
+    const newUrl = rewriteGscPerformanceUrl(currentUrl);
+    log(`Refreshing date range — navigating to: ${newUrl}`);
+    await chrome.tabs.update(tabId, { url: newUrl });
+    await sleep(800);
+    await waitForTabComplete(tabId);
+    await sleep(4000);
+  } else {
+    log(`end_date already today (${today}); skipping reload`);
+  }
+
+  log("Injecting scraper into GSC tab");
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    files: ["gsc-performance-scraper.js"],
+  });
+
+  // Wait until scraper signals complete or error (via GSC_PERF_PROGRESS).
+  const urls = await gscImport.completePromise;
+  const summary = await applyImportedUrls(urls);
+  gscImport = null;
+  return { urlCount: urls.length, ...summary };
+}
+
+function canonicalUrlForMatch(u) {
+  try {
+    const url = new URL(u);
+    url.hostname = url.hostname.toLowerCase().replace(/^www\./, "");
+    if (url.pathname !== "/" && url.pathname.endsWith("/")) {
+      url.pathname = url.pathname.slice(0, -1);
+    }
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return u;
+  }
+}
+
+async function applyImportedUrls(urls) {
+  if (!urls.length) {
+    log("No URLs collected from GSC — nothing to update", "warning");
+    return { newlyIndexed: 0, flippedFromNotIndexed: 0, alreadyIndexed: 0, fromUnknown: 0 };
+  }
+
+  // Group by domain so we read each domain's record set once.
+  const byDomain = new Map();
+  for (const url of urls) {
+    let host;
+    try { host = new URL(url).hostname; } catch { continue; }
+    if (!byDomain.has(host)) byDomain.set(host, []);
+    byDomain.get(host).push(url);
+  }
+
+  let newlyIndexed = 0, flippedFromNotIndexed = 0, alreadyIndexed = 0, fromUnknown = 0;
+  let duplicateKeysUpdated = 0;
+
+  for (const [host, list] of byDomain) {
+    const sample = list[0];
+    const prior = await Storage.getUrlStatuses(sample);
+
+    // Build canonical → list-of-existing-keys map so we can overwrite ALL
+    // variants (trailing slash, www, case) of a stored URL when GSC reports it.
+    const canonicalToKeys = new Map();
+    for (const k of Object.keys(prior)) {
+      const c = canonicalUrlForMatch(k);
+      if (!canonicalToKeys.has(c)) canonicalToKeys.set(c, []);
+      canonicalToKeys.get(c).push(k);
+    }
+
+    for (const u of list) {
+      const canonical = canonicalUrlForMatch(u);
+      const existingKeys = canonicalToKeys.get(canonical) || [];
+
+      // Decide the "winning" prior record (the one that best represents
+      // pre-import state) for the breakdown counts.
+      let priorRec = prior[u];
+      if (!priorRec && existingKeys.length) priorRec = prior[existingKeys[0]];
+
+      if (!priorRec) {
+        fromUnknown++;
+        newlyIndexed++;
+      } else if (priorRec.status === "indexed") {
+        alreadyIndexed++;
+      } else if (priorRec.status === "not_indexed") {
+        flippedFromNotIndexed++;
+        newlyIndexed++;
+      } else {
+        fromUnknown++;
+        newlyIndexed++;
+      }
+
+      // Overwrite the canonical URL itself plus every existing variant key,
+      // so trailing-slash/www duplicates don't keep their stale status.
+      const targets = new Set([u, ...existingKeys]);
+      for (const target of targets) {
+        await Storage.saveUrlStatus(sample, target, { status: "indexed" });
+      }
+      if (existingKeys.length > 0 && !existingKeys.includes(u)) {
+        duplicateKeysUpdated += existingKeys.length;
+      }
+    }
+    log(`Updated ${list.length} URLs for ${host}`, "success");
+  }
+
+  const dupeNote = duplicateKeysUpdated
+    ? ` (also overwrote ${duplicateKeysUpdated} duplicate trailing-slash/www variants)`
+    : "";
+  log(
+    `Marked ${urls.length} URLs as indexed — ${newlyIndexed} newly indexed, ` +
+    `${flippedFromNotIndexed} flipped from not_indexed, ${alreadyIndexed} confirmed already indexed, ` +
+    `${fromUnknown} previously unknown${dupeNote}`,
+    "success"
+  );
+
+  // Post-save audit: re-read storage and verify the imported URLs are truly
+  // there with status="indexed". Pinpoints whether the missing-from-Summary
+  // issue is a save bug or a Summary load bug.
+  if (urls.length > 0) {
+    const sample = urls[0];
+    let host;
+    try { host = new URL(sample).hostname.replace(/^www\./, ""); } catch { host = ""; }
+    const verify = await Storage.getUrlStatuses(sample);
+    const keys = Object.keys(verify);
+    let importedFound = 0;
+    let importedIndexed = 0;
+    let importedMissing = [];
+    for (const u of urls) {
+      const rec = verify[u];
+      if (rec) {
+        importedFound++;
+        if (rec.status === "indexed") importedIndexed++;
+      } else if (importedMissing.length < 5) {
+        importedMissing.push(u);
+      }
+    }
+    // Path-based bucket: count storage keys containing the most common path
+    // segment in the imported URLs (e.g. "/research" or "/drug").
+    let pathCount = 0;
+    let pathSample = "";
+    try {
+      const firstPath = new URL(sample).pathname.split("/").filter(Boolean)[0];
+      if (firstPath) {
+        pathSample = `/${firstPath}`;
+        pathCount = keys.filter((k) => k.includes(pathSample)).length;
+      }
+    } catch {}
+    log(
+      `Storage audit (${host}): ${keys.length} total keys; ` +
+      `${importedFound}/${urls.length} just-imported URLs present in storage; ` +
+      `${importedIndexed}/${urls.length} now have status=indexed; ` +
+      `${pathCount} keys contain "${pathSample}"`,
+      importedFound === urls.length && importedIndexed === urls.length ? "success" : "warning"
+    );
+    if (importedMissing.length > 0) {
+      log(`Missing examples: ${importedMissing.join(", ")}`, "warning");
+    }
+  }
+
+  broadcastProgress({ status: "gsc_import_complete", urlCount: urls.length });
+  return { newlyIndexed, flippedFromNotIndexed, alreadyIndexed, fromUnknown };
+}
+
+function handleGscPerfProgress(msg, sender) {
+  if (!gscImport) {
+    console.warn("[GSC Indexer] Received GSC_PERF_PROGRESS but no import is active", msg);
+    return;
+  }
+  switch (msg.event) {
+    case "scraper_started":
+      log(`GSC scraper started on ${msg.url}`);
+      break;
+    case "debug": {
+      const dataStr = msg.data ? ` ${JSON.stringify(msg.data)}` : "";
+      log(`[scraper] ${msg.message}${dataStr}`);
+      break;
+    }
+    case "page_size_already_500":
+      log("Page size already 500, skipping resize");
+      break;
+    case "page_size_set":
+      log(`Set page size to ${msg.value}`);
+      break;
+    case "page_scraped": {
+      const samples = msg.sampleUrls && msg.sampleUrls.length
+        ? ` — sample: ${msg.sampleUrls.join(", ")}`
+        : "";
+      log(`Page ${msg.page}: scraped ${msg.pageCount} URLs (+${msg.newCount} new, total ${msg.total})${samples}`);
+      break;
+    }
+    case "pagination_warning":
+      log(`Pagination warning: ${msg.message}`, "warning");
+      break;
+    case "scraper_complete":
+      log(`Pagination complete — ${msg.urls.length} unique URLs collected`, "success");
+      gscImport.resolveComplete(msg.urls);
+      break;
+    case "scraper_error":
+      log(`Scraper error: ${msg.message}`, "error");
+      gscImport.rejectComplete(new Error(msg.message));
+      break;
+  }
+}
+
 // Listen for messages from popup
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "START") {
@@ -657,6 +912,25 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }
     })();
     return true;
+  }
+
+  if (msg.type === "IMPORT_FROM_GSC") {
+    (async () => {
+      try {
+        const result = await importFromGsc(msg.tabId, msg.currentUrl);
+        sendResponse({ ok: true, ...result });
+      } catch (e) {
+        log(`GSC import failed: ${e.message}`, "error");
+        sendResponse({ ok: false, error: e.message });
+      }
+    })();
+    return true;
+  }
+
+  if (msg.type === "GSC_PERF_PROGRESS") {
+    handleGscPerfProgress(msg, sender);
+    sendResponse({ ok: true });
+    return false;
   }
 
   if (msg.type === "GET_URL_STATUSES") {
