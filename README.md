@@ -66,3 +66,6 @@ This means it's subject to the same GSC UI changes Google makes. If Google chang
 ## License
 
 MIT
+
+## Other
+Find a copy of this repo on GitLab here https://gitlab.com/o_gamaniuk/GSC-URL-Indexer
