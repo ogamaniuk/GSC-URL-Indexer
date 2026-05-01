@@ -24,8 +24,8 @@ Works in Chrome and Edge.
 
 1. Click the extension icon
 2. Choose input mode:
-   - **Sitemap** — enter a sitemap URL (e.g. `https://example.com/sitemap.xml`)
-   - **Paste URLs** — paste URLs directly (one per line, or mixed in text — they'll be extracted automatically)
+   - **Sitemap** — enter a sitemap URL (e.g. `https://hipa.ai/sitemap.xml`)
+   - **Paste URLs** — paste URLs directly (one per line, or mixed in text — they'll be extracted automatically. Example: `https://hipa.ai/paid-clinical-trials-ca`)
 3. Click Start
 4. The extension opens GSC and begins processing
 
