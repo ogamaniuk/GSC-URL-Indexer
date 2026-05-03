@@ -14,7 +14,7 @@ const GSC = {
   /**
    * Wait for a condition to be true, polling at an interval.
    */
-  waitFor(checkFn, timeoutMs = 60000, intervalMs = 1000) {
+  waitFor(checkFn, timeoutMs = 60000, intervalMs = 500) {
     return new Promise((resolve, reject) => {
       const start = Date.now();
       const timer = setInterval(() => {
@@ -76,14 +76,14 @@ const GSC = {
 
     // Click and focus
     input.click();
-    await this.sleep(500);
+    await this.sleep(100);
     input.focus();
-    await this.sleep(300);
+    await this.sleep(50);
 
     // Select all existing text and replace with URL
     // This simulates real user input that GSC's listeners recognize
     input.select();
-    await this.sleep(100);
+    await this.sleep(50);
 
     // Use insertText which fires proper input events (like real typing)
     if (!document.execCommand("insertText", false, url)) {
@@ -93,7 +93,7 @@ const GSC = {
         bubbles: true, inputType: "insertText", data: url
       }));
     }
-    await this.sleep(300);
+    await this.sleep(150);
 
     // Submit with Enter key
     input.dispatchEvent(
@@ -105,7 +105,7 @@ const GSC = {
     input.dispatchEvent(
       new KeyboardEvent("keyup", { key: "Enter", code: "Enter", keyCode: 13, bubbles: true })
     );
-    await this.sleep(200);
+    await this.sleep(50);
 
     // Also try clicking the search button
     const searchBtn = document.querySelector('button[aria-label="Search"]');
@@ -129,7 +129,7 @@ const GSC = {
           return "not_indexed";
         }
         return false;
-      }, timeoutMs, 2000);
+      }, timeoutMs, 500);
       return status;
     } catch {
       return null;
@@ -172,7 +172,7 @@ const GSC = {
 
       if (text.includes(this.INDEXING_COMPLETE)) {
         // Try to close modal
-        await this.sleep(1000);
+        await this.sleep(300);
         const okButtons = [
           ...this.findByText("OK"),
           ...this.findByText("Got it"),
@@ -186,7 +186,7 @@ const GSC = {
         return "success";
       }
 
-      await this.sleep(2000);
+      await this.sleep(500);
     }
     return "timeout";
   },
@@ -206,7 +206,7 @@ const GSC = {
       }
 
       await this.submitUrl(url);
-      await this.sleep(5000);
+      await this.sleep(1000);
 
       const status = await this.waitForStatus(60000);
 
@@ -248,7 +248,7 @@ const GSC = {
 
       // Type URL and submit
       await this.submitUrl(url);
-      await this.sleep(5000);
+      await this.sleep(1000);
 
       // Wait for status
       const status = await this.waitForStatus(60000);

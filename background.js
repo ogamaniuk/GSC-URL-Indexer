@@ -328,7 +328,7 @@ async function processQueue() {
     console.log(`[GSC Indexer] GSC tab opened: ${tabId}`);
 
     // Wait for initial page load + content script
-    await sleep(3000);
+    await sleep(500);
     await waitForContentScript(tabId);
 
     for (let i = state.currentIndex; i < state.queue.length; i++) {
@@ -358,7 +358,6 @@ async function processQueue() {
       const gscUrl = `https://search.google.com/search-console?resource_id=${encodedProperty}`;
       await chrome.tabs.update(tabId, { url: gscUrl });
       await waitForTabReady(tabId);
-      await sleep(2000);
       await waitForContentScript(tabId);
 
       let result;
