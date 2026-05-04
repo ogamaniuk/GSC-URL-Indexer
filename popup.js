@@ -17,6 +17,7 @@ const els = {
   sitemapsPanel: $("sitemapsPanel"),
   summaryPanel: $("summaryPanel"),
   summaryDomain: $("summaryDomain"),
+  summaryDomainSelect: $("summaryDomainSelect"),
   summaryTotals: $("summaryTotals"),
   summaryList: $("summaryList"),
   summarySearch: $("summarySearch"),
@@ -41,6 +42,7 @@ const els = {
   rawUrlsInput: $("rawUrlsInput"),
   srcSitemap: $("srcSitemap"),
   srcPaste: $("srcPaste"),
+  gscAutoImportToggle: $("gscAutoImportToggle"),
 };
 
 // Must match INDEX_REQUEST_COOLDOWN_DAYS in background.js — used only for
@@ -294,6 +296,9 @@ async function loadSitemaps() {
 const ALL_FILTERS = ["indexed", "not_indexed", "requested", "unknown"];
 let summaryState = {
   domainUrl: null,
+  // User-picked domain from the dropdown. When set, takes priority over
+  // sitemap/paste input and lastSitemapUrl. Cleared by picking "Auto" entry.
+  domainOverride: null,
   inputUrls: [],
   records: {},
   recordsByCanonical: new Map(),
@@ -303,6 +308,92 @@ let summaryState = {
   selected: new Set(),
   loadId: 0,
 };
+
+// Parse the GSC resource_id query param (e.g. "sc-domain:instafill.ai" or
+// "https://instafill.ai/") into a canonical https URL we can use as a domain key.
+function gscResourceIdToDomainUrl(resourceId) {
+  if (!resourceId) return null;
+  if (resourceId.startsWith("sc-domain:")) {
+    return `https://${resourceId.slice("sc-domain:".length)}/`;
+  }
+  try { return new URL(resourceId).toString(); } catch { return null; }
+}
+
+async function getActiveGscDomainUrl() {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab || !tab.url) return null;
+    if (!/^https:\/\/search\.google\.com\/(u\/\d+\/)?search-console\//.test(tab.url)) return null;
+    const u = new URL(tab.url);
+    return gscResourceIdToDomainUrl(u.searchParams.get("resource_id"));
+  } catch { return null; }
+}
+
+// Enumerate every domain we have stored URL records for (chrome.storage keys
+// of the form "url_status_<host_with_dots_replaced_by_underscores>").
+async function populateDomainSelect(currentDomainUrl) {
+  const select = els.summaryDomainSelect;
+  if (!select) return;
+
+  const stored = await listStoredDomains();
+  const gscDomainUrl = await getActiveGscDomainUrl();
+
+  // Build the option list. Always include the GSC active-tab domain (if any)
+  // and the chosen domain even when they have no stored records yet.
+  const seen = new Set();
+  const opts = [];
+  function addOpt(domainUrl, label) {
+    if (!domainUrl) return;
+    let host;
+    try { host = new URL(domainUrl).hostname.replace(/^www\./, ""); } catch { host = domainUrl; }
+    if (seen.has(host)) return;
+    seen.add(host);
+    opts.push({ host, domainUrl, label: label || host });
+  }
+  if (gscDomainUrl) {
+    let h; try { h = new URL(gscDomainUrl).hostname.replace(/^www\./, ""); } catch {}
+    addOpt(gscDomainUrl, `${h || "GSC"}  (GSC tab)`);
+  }
+  if (currentDomainUrl) addOpt(currentDomainUrl);
+  for (const d of stored) addOpt(d.domainUrl, `${d.hostname}  (${d.count})`);
+
+  let currentHost = "";
+  try { currentHost = currentDomainUrl ? new URL(currentDomainUrl).hostname.replace(/^www\./, "") : ""; } catch {}
+
+  select.innerHTML = "";
+  if (opts.length === 0) {
+    const o = document.createElement("option");
+    o.value = ""; o.textContent = "(no stored domains)";
+    select.appendChild(o);
+    select.disabled = true;
+    return;
+  }
+  select.disabled = false;
+  for (const o of opts) {
+    const el = document.createElement("option");
+    el.value = o.domainUrl;
+    el.textContent = o.label;
+    if (o.host === currentHost) el.selected = true;
+    select.appendChild(el);
+  }
+}
+
+async function listStoredDomains() {
+  const all = await chrome.storage.local.get(null);
+  const domains = [];
+  for (const key of Object.keys(all)) {
+    if (!key.startsWith("url_status_")) continue;
+    const recs = all[key];
+    if (!recs || typeof recs !== "object") continue;
+    const count = Object.keys(recs).length;
+    if (count === 0) continue;
+    const slug = key.slice("url_status_".length);
+    const hostname = slug.replace(/_/g, ".");
+    domains.push({ hostname, count, domainUrl: `https://${hostname}/` });
+  }
+  domains.sort((a, b) => b.count - a.count);
+  return domains;
+}
 
 function indexRecordsByCanonical(records) {
   const map = new Map();
@@ -417,18 +508,53 @@ function fetchInputUrls(spec) {
 }
 
 async function loadSummary() {
-  const spec = currentInputSpec();
+  // Resolve which domain's records to show, in priority order:
+  //   1. dropdown override (user picked a specific domain)
+  //   2. active GSC tab's resource_id (so opening popup over GSC = see that domain)
+  //   3. sitemap/paste input box
+  //   4. last-used sitemap
+  let chosenDomainUrl = summaryState.domainOverride;
+  let chosenSpec = null;
 
-  // No sitemap/paste input → show the complete stored picture for the most
-  // recently used domain (everything we've ever recorded, including URLs
-  // imported from GSC that aren't in any sitemap).
-  if (!spec) {
+  if (!chosenDomainUrl) {
+    const gscDomainUrl = await getActiveGscDomainUrl();
+    if (gscDomainUrl) chosenDomainUrl = gscDomainUrl;
+  }
+
+  // Always consider the input box — if it points at the same domain we picked
+  // (or no GSC/override pre-empted us), use spec/sitemap mode so the user
+  // still sees their sitemap-vs-storage view rather than "all stored".
+  const inputSpec = currentInputSpec();
+  if (inputSpec) {
+    if (!chosenDomainUrl) {
+      chosenSpec = inputSpec;
+      chosenDomainUrl = inputSpec.domainUrl;
+    } else {
+      const sameHost = (() => {
+        try {
+          return new URL(inputSpec.domainUrl).hostname.replace(/^www\./, "")
+            === new URL(chosenDomainUrl).hostname.replace(/^www\./, "");
+        } catch { return false; }
+      })();
+      if (sameHost) chosenSpec = inputSpec;
+    }
+  }
+
+  if (!chosenDomainUrl) {
     const data = await chrome.storage.local.get("lastSitemapUrl");
-    const fallbackDomainUrl = data.lastSitemapUrl || null;
-    summaryState.domainUrl = fallbackDomainUrl;
+    chosenDomainUrl = data.lastSitemapUrl || null;
+  }
+
+  await populateDomainSelect(chosenDomainUrl);
+
+  // No sitemap/paste input → show the complete stored picture for the chosen
+  // domain (everything we've ever recorded, including URLs imported from GSC
+  // that aren't in any sitemap).
+  if (!chosenSpec) {
+    summaryState.domainUrl = chosenDomainUrl;
     summaryState.selected = new Set();
 
-    if (!fallbackDomainUrl) {
+    if (!chosenDomainUrl) {
       summaryState.inputUrls = [];
       summaryState.records = {};
       summaryState.recordsByCanonical = new Map();
@@ -440,11 +566,11 @@ async function loadSummary() {
     }
 
     let hostname;
-    try { hostname = new URL(fallbackDomainUrl).hostname.replace(/^www\./, ""); }
-    catch { hostname = fallbackDomainUrl; }
+    try { hostname = new URL(chosenDomainUrl).hostname.replace(/^www\./, ""); }
+    catch { hostname = chosenDomainUrl; }
     els.summaryDomain.textContent = `${hostname} (all stored)`;
 
-    const records = await fetchUrlStatuses(fallbackDomainUrl);
+    const records = await fetchUrlStatuses(chosenDomainUrl);
     summaryState.inputUrls = Object.keys(records).sort();
     summaryState.records = records;
     summaryState.recordsByCanonical = indexRecordsByCanonical(records);
@@ -454,11 +580,12 @@ async function loadSummary() {
     return;
   }
 
-  const domainUrl = spec.domainUrl;
+  const domainUrl = chosenSpec.domainUrl;
   if (domainUrl !== summaryState.domainUrl) {
     summaryState.selected = new Set();
   }
   summaryState.domainUrl = domainUrl;
+  const spec = chosenSpec;
 
   let hostname;
   try { hostname = new URL(domainUrl).hostname.replace(/^www\./, ""); }
@@ -973,6 +1100,31 @@ async function refreshImportGscButton() {
 }
 refreshImportGscButton();
 
+// ── Auto-import toggle (default ON when key missing) ──
+(async () => {
+  try {
+    const { gscAutoImportEnabled } = await chrome.storage.local.get("gscAutoImportEnabled");
+    els.gscAutoImportToggle.checked = gscAutoImportEnabled !== false;
+  } catch {
+    els.gscAutoImportToggle.checked = true;
+  }
+})();
+
+els.gscAutoImportToggle.addEventListener("change", () => {
+  const enabled = !!els.gscAutoImportToggle.checked;
+  chrome.storage.local.set({ gscAutoImportEnabled: enabled });
+  chrome.runtime.sendMessage({ type: "GSC_AUTO_IMPORT_TOGGLED", enabled });
+});
+
+// ── Summary domain dropdown ──
+els.summaryDomainSelect.addEventListener("change", () => {
+  const v = els.summaryDomainSelect.value;
+  summaryState.domainOverride = v || null;
+  // Reset selection set since we're switching domains.
+  summaryState.selected = new Set();
+  refreshSummaryIfOpen();
+});
+
 els.importGscBtn.addEventListener("click", () => {
   const tab = els.importGscBtn._activeTab;
   if (!tab) return;
@@ -1095,6 +1247,16 @@ chrome.runtime.onMessage.addListener((msg) => {
 
     case "meta_update":
       updateMeta(msg.runStats, msg.dailyQuota);
+      break;
+
+    case "gsc_import_complete":
+      // After an import (manual or auto), switch the Summary view to whichever
+      // domain just received URLs so the user sees the fresh data immediately.
+      if (msg.importedDomainUrl) {
+        summaryState.domainOverride = msg.importedDomainUrl;
+        summaryState.selected = new Set();
+      }
+      refreshSummaryIfOpen();
       break;
 
     case "quota_exceeded":

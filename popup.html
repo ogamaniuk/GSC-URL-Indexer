@@ -354,6 +354,10 @@
       </select>
       <button id="startBtn">Start</button>
       <button id="importGscBtn" disabled title="Open a GSC Performance tab to enable">Import from GSC</button>
+      <label id="gscAutoImportLabel" title="Automatically import URLs whenever you open a GSC Performance page with breakdown=page" style="display:flex;align-items:center;gap:4px;font-size:12px;color:#5f6368;cursor:pointer;user-select:none;">
+        <input type="checkbox" id="gscAutoImportToggle" style="cursor:pointer;margin:0;" />
+        Auto
+      </label>
       <button id="pauseBtn" style="display:none;">Pause</button>
       <button id="resumeBtn" style="display:none;">Resume</button>
     </div>
@@ -393,7 +397,10 @@
     <div id="remainingPanel" class="tab-panel"></div>
     <div id="summaryPanel" class="tab-panel active" style="display:none;flex-direction:column;background:#fafafa;border:1px solid #e0e0e0;border-top:none;border-radius:0 0 4px 4px;">
       <div class="summary-header">
-        <div class="domain" id="summaryDomain">—</div>
+        <div class="domain" style="display:flex;align-items:center;gap:6px;">
+          <span id="summaryDomain">—</span>
+          <select id="summaryDomainSelect" title="Switch which domain's records are shown" style="font-size:11px;padding:2px 4px;border:1px solid #d0d0d0;border-radius:3px;background:#fff;cursor:pointer;max-width:220px;"></select>
+        </div>
         <div class="totals" id="summaryTotals">No data yet</div>
       </div>
       <div class="summary-controls">

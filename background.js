@@ -685,7 +685,13 @@ async function applyImportedUrls(urls) {
     }
   }
 
-  broadcastProgress({ status: "gsc_import_complete", urlCount: urls.length });
+  // Pick a representative URL so the popup can switch the Summary view to
+  // the domain that just received imports (e.g. when the user toggles between
+  // GSC properties for hipa.ai and instafill.ai).
+  const importedDomainUrl = urls[0] ? (() => {
+    try { return new URL(urls[0]).origin + "/"; } catch { return null; }
+  })() : null;
+  broadcastProgress({ status: "gsc_import_complete", urlCount: urls.length, importedDomainUrl });
   return { newlyIndexed, flippedFromNotIndexed, alreadyIndexed, fromUnknown };
 }
 
@@ -921,6 +927,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return false;
   }
 
+  if (msg.type === "GSC_AUTO_IMPORT_TOGGLED") {
+    log(`Auto-import toggle set to ${msg.enabled ? "on" : "off"}`);
+    sendResponse({ ok: true });
+    return false;
+  }
+
   if (msg.type === "GET_URL_STATUSES") {
     (async () => {
       try {
@@ -932,4 +944,79 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     })();
     return true;
   }
+});
+
+// ── Auto-import on GSC Performance navigation ──
+const GSC_PERF_RE_BG = /^https:\/\/search\.google\.com\/(u\/\d+\/)?search-console\/performance\/search-analytics/;
+const lastAutoImportedUrls = new Map(); // tabId -> Set<string> of recently-handled URLs (max 4)
+const lastSkipLogged = new Map(); // tabId -> last (url|reason) we logged a skip for, to avoid log spam
+
+function rememberAutoImported(tabId, ...urls) {
+  let s = lastAutoImportedUrls.get(tabId);
+  if (!s) { s = new Set(); lastAutoImportedUrls.set(tabId, s); }
+  for (const u of urls) s.add(u);
+  while (s.size > 4) s.delete(s.values().next().value);
+}
+
+function isGscPagePerformanceUrl(u) {
+  if (!u || !GSC_PERF_RE_BG.test(u)) return false;
+  try {
+    return new URL(u).searchParams.get("breakdown") === "page";
+  } catch { return false; }
+}
+
+async function maybeAutoImport(tabId, url) {
+  if (!isGscPagePerformanceUrl(url)) return;
+
+  const handled = lastAutoImportedUrls.get(tabId);
+  if (handled && handled.has(url)) return;
+
+  const { gscAutoImportEnabled } = await chrome.storage.local.get("gscAutoImportEnabled");
+  if (gscAutoImportEnabled === false) {
+    const key = `${url}|off`;
+    if (lastSkipLogged.get(tabId) !== key) {
+      lastSkipLogged.set(tabId, key);
+      log("Auto-import skipped — toggle is off");
+    }
+    return;
+  }
+
+  if (gscImport) {
+    const key = `${url}|running`;
+    if (lastSkipLogged.get(tabId) !== key) {
+      lastSkipLogged.set(tabId, key);
+      log("Auto-import skipped — another import is in progress", "warning");
+    }
+    return;
+  }
+
+  // Record both the original URL and the rewritten URL (importFromGsc may
+  // navigate the tab to set end_date=today; the resulting onUpdated fire
+  // would otherwise re-trigger us).
+  rememberAutoImported(tabId, url);
+  try {
+    const rewritten = rewriteGscPerformanceUrl(url);
+    if (rewritten && rewritten !== url) rememberAutoImported(tabId, rewritten);
+  } catch {}
+
+  log(`Auto-importing from GSC (tab ${tabId}): ${url}`);
+  try {
+    await importFromGsc(tabId, url);
+  } catch (e) {
+    log(`Auto-import failed: ${e.message}`, "error");
+    // Allow a retry on next navigation event for this URL.
+    const s = lastAutoImportedUrls.get(tabId);
+    if (s) s.delete(url);
+  }
+}
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  const url = changeInfo.url || (changeInfo.status === "complete" ? tab && tab.url : null);
+  if (!url) return;
+  maybeAutoImport(tabId, url);
+});
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  lastAutoImportedUrls.delete(tabId);
+  lastSkipLogged.delete(tabId);
 });
