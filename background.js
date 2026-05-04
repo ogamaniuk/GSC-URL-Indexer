@@ -537,11 +537,8 @@ async function importFromGsc(tabId, currentUrl) {
     await sleep(800);
     await waitForTabComplete(tabId);
     await sleep(4000);
-  } else {
-    log(`end_date already today (${today}); skipping reload`);
   }
 
-  log("Injecting scraper into GSC tab");
   await chrome.scripting.executeScript({
     target: { tabId },
     files: ["gsc-performance-scraper.js"],
@@ -699,24 +696,16 @@ function handleGscPerfProgress(msg, sender) {
   }
   switch (msg.event) {
     case "scraper_started":
-      log(`GSC scraper started on ${msg.url}`);
+      log("GSC scraper started");
       break;
-    case "debug": {
-      const dataStr = msg.data ? ` ${JSON.stringify(msg.data)}` : "";
-      log(`[scraper] ${msg.message}${dataStr}`);
+    case "debug":
+      // Verbose scraper diagnostics — kept on the GSC tab DevTools console only.
       break;
-    }
     case "page_size_already_500":
-      log("Page size already 500, skipping resize");
-      break;
     case "page_size_set":
-      log(`Set page size to ${msg.value}`);
       break;
     case "page_scraped": {
-      const samples = msg.sampleUrls && msg.sampleUrls.length
-        ? ` — sample: ${msg.sampleUrls.join(", ")}`
-        : "";
-      log(`Page ${msg.page}: scraped ${msg.pageCount} URLs (+${msg.newCount} new, total ${msg.total})${samples}`);
+      log(`Page ${msg.page}: scraped ${msg.pageCount} URLs (+${msg.newCount} new, total ${msg.total})`);
       break;
     }
     case "pagination_warning":
