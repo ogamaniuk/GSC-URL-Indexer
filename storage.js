@@ -45,6 +45,27 @@ const Storage = {
     const key = this.domainKey(domainUrl);
     const data = await chrome.storage.local.get(key);
     const records = data[key] || {};
+    this._applyStatus(records, url, { status, requestedAt });
+    await chrome.storage.local.set({ [key]: records });
+  },
+
+  /**
+   * Bulk variant: apply many status updates to a single domain with one
+   * get + one set. `updates` is an array of { url, status, requestedAt }.
+   * Used by the GSC importer to avoid 1000+ separate storage round-trips.
+   */
+  async saveUrlStatusesBulk(domainUrl, updates) {
+    if (!updates || updates.length === 0) return;
+    const key = this.domainKey(domainUrl);
+    const data = await chrome.storage.local.get(key);
+    const records = data[key] || {};
+    for (const u of updates) {
+      this._applyStatus(records, u.url, { status: u.status, requestedAt: u.requestedAt });
+    }
+    await chrome.storage.local.set({ [key]: records });
+  },
+
+  _applyStatus(records, url, { status, requestedAt } = {}) {
     const prev = records[url] || {};
     const now = Date.now();
     const nextStatus = status ?? prev.status ?? null;
@@ -58,7 +79,6 @@ const Storage = {
       requestedAt: requestedAt !== undefined ? requestedAt : (prev.requestedAt ?? null),
       indexedAt,
     };
-    await chrome.storage.local.set({ [key]: records });
   },
 
   async clearUrlStatuses(url) {

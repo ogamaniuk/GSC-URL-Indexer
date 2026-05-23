@@ -596,6 +596,7 @@ async function applyImportedUrls(urls) {
       canonicalToKeys.get(c).push(k);
     }
 
+    const bulkUpdates = [];
     for (const u of list) {
       const canonical = canonicalUrlForMatch(u);
       const existingKeys = canonicalToKeys.get(canonical) || [];
@@ -622,12 +623,13 @@ async function applyImportedUrls(urls) {
       // so trailing-slash/www duplicates don't keep their stale status.
       const targets = new Set([u, ...existingKeys]);
       for (const target of targets) {
-        await Storage.saveUrlStatus(sample, target, { status: "indexed" });
+        bulkUpdates.push({ url: target, status: "indexed" });
       }
       if (existingKeys.length > 0 && !existingKeys.includes(u)) {
         duplicateKeysUpdated += existingKeys.length;
       }
     }
+    await Storage.saveUrlStatusesBulk(sample, bulkUpdates);
     log(`Updated ${list.length} URLs for ${host}`, "success");
   }
 
