@@ -232,61 +232,6 @@
     .icon-btn:disabled:hover { color: #5f6368; border-color: #d0d0d0; }
     .icon-btn svg { width: 13px; height: 13px; fill: currentColor; }
     .icon-btn .count { font-weight: 600; }
-    .summary-table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 11px;
-      table-layout: fixed;
-    }
-    .summary-table th, .summary-table td {
-      padding: 4px 8px;
-      text-align: left;
-      border-bottom: 1px solid #f0f0f0;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .summary-table th {
-      background: #fafafa;
-      color: #5f6368;
-      font-weight: 500;
-      position: sticky;
-      top: 0;
-    }
-    .summary-table td.col-url a { color: #1a73e8; }
-    .summary-table th.col-check, .summary-table td.col-check { width: 24px; text-align: center; padding: 4px 2px; }
-    .summary-table th.col-check input, .summary-table td.col-check input { cursor: pointer; margin: 0; }
-    .summary-table th.col-url, .summary-table td.col-url { width: 50%; }
-    .summary-table th.col-status, .summary-table td.col-status { width: 90px; }
-    .summary-table th.col-checked, .summary-table td.col-checked,
-    .summary-table th.col-indexed, .summary-table td.col-indexed,
-    .summary-table th.col-requested, .summary-table td.col-requested { width: 70px; color: #5f6368; }
-    .status-pill {
-      display: inline-block;
-      padding: 1px 6px;
-      border-radius: 8px;
-      font-size: 10px;
-      font-weight: 500;
-    }
-    .status-pill.indexed { background: #e6f4ea; color: #137333; }
-    .status-pill.not_indexed { background: #fce8e6; color: #c5221f; }
-    .status-pill.requested { background: #e8f0fe; color: #1a73e8; }
-    .status-pill.unknown { background: #eceff1; color: #5f6368; }
-    .status-pill.in_progress { background: #e8f0fe; color: #1a73e8; }
-    .status-pill.in_progress::before {
-      content: "";
-      display: inline-block;
-      width: 7px;
-      height: 7px;
-      border: 2px solid #1a73e8;
-      border-top-color: transparent;
-      border-radius: 50%;
-      animation: spin 0.7s linear infinite;
-      margin-right: 4px;
-      vertical-align: middle;
-    }
-    @keyframes spin { to { transform: rotate(360deg); } }
-    .summary-table tr.in-progress { background: #f0f7ff; }
     #summaryEmpty { padding: 20px; color: #9e9e9e; text-align: center; }
     #summaryList {
       height: 100%;

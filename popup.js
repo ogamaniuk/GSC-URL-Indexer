@@ -305,7 +305,6 @@ let summaryState = {
   filters: new Set(ALL_FILTERS),
   search: "",
   inProgressUrl: null,
-  selected: new Set(),
   loadId: 0,
 };
 
@@ -472,26 +471,6 @@ function getRecord(url) {
   return summaryState.recordsByCanonical.get(canonicalUrl(url));
 }
 
-function timeAgoShort(ts) {
-  if (!ts) return "—";
-  const diff = Date.now() - ts;
-  const mins = Math.floor(diff / 60000);
-  const hours = Math.floor(diff / 3600000);
-  const days = Math.floor(diff / 86400000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m`;
-  if (hours < 24) return `${hours}h`;
-  return `${days}d`;
-}
-
-function fullDateTitle(ts) {
-  if (!ts) return "";
-  return new Date(ts).toLocaleString("en-US", {
-    year: "numeric", month: "short", day: "numeric",
-    hour: "2-digit", minute: "2-digit", hour12: false,
-  });
-}
-
 function fetchInputUrls(spec) {
   return new Promise((resolve) => {
     const msg = { type: "GET_INPUT_URLS" };
@@ -552,7 +531,6 @@ async function loadSummary() {
   // that aren't in any sitemap).
   if (!chosenSpec) {
     summaryState.domainUrl = chosenDomainUrl;
-    summaryState.selected = new Set();
 
     if (!chosenDomainUrl) {
       summaryState.inputUrls = [];
@@ -561,7 +539,7 @@ async function loadSummary() {
       els.summaryDomain.textContent = "—";
       els.summaryTotals.textContent = "Enter a sitemap URL or paste URLs to see status";
       els.summaryList.innerHTML = '<div id="summaryEmpty">No domain selected</div>';
-      updateSelectedCount();
+      setCopyButtonState(0);
       return;
     }
 
@@ -581,9 +559,6 @@ async function loadSummary() {
   }
 
   const domainUrl = chosenSpec.domainUrl;
-  if (domainUrl !== summaryState.domainUrl) {
-    summaryState.selected = new Set();
-  }
   summaryState.domainUrl = domainUrl;
   const spec = chosenSpec;
 
@@ -612,7 +587,7 @@ async function loadSummary() {
     summaryState.inputUrls = [];
     summaryState.records = records;
     summaryState.recordsByCanonical = indexRecordsByCanonical(records);
-    updateSelectedCount();
+    setCopyButtonState(0);
     return;
   }
 
@@ -682,26 +657,32 @@ function renderSummary() {
     updateFilterCounts({ total: 0, indexed: 0, notIndexed: 0, requested: 0, unknown: 0 });
     els.summaryTotals.textContent = "No URLs in current input";
     els.summaryList.innerHTML = '<div id="summaryEmpty">Paste URLs or enter a sitemap URL above.</div>';
-    updateSelectedCount();
+    setCopyButtonState(0);
     return;
   }
 
-  // Scope counts to URLs matching the search filter (so the status pills
-  // reflect what the user is currently looking at). Status filters still only
-  // affect the rendered rows below.
+  // Scope counts to URLs matching the search filter so the status pills
+  // reflect what the user is currently looking at.
   const search = summaryState.search.toLowerCase();
   const scopedUrls = search
     ? inputUrls.filter((u) => u.toLowerCase().includes(search))
     : inputUrls;
 
-  let indexed = 0, notIndexed = 0, requested = 0, unknown = 0;
+  const filters = summaryState.filters;
+  const ipUrl = summaryState.inProgressUrl;
+  let indexed = 0, notIndexed = 0, requested = 0, unknown = 0, copyable = 0;
   for (const u of scopedUrls) {
-    switch (classifyRecord(getRecord(u))) {
+    const cat = classifyRecord(getRecord(u));
+    switch (cat) {
       case "indexed": indexed++; break;
       case "requested": requested++; break;
       case "not_indexed": notIndexed++; break;
       default: unknown++;
     }
+    // Copy/Export operate on URLs matching the current status filters; the
+    // in-progress URL is always included regardless of filter (matches the
+    // old per-row "always visible" behavior).
+    if (u === ipUrl || filters.has(cat)) copyable++;
   }
   const scopedTotal = scopedUrls.length;
   updateFilterCounts({ total: scopedTotal, indexed, notIndexed, requested, unknown });
@@ -717,78 +698,22 @@ function renderSummary() {
     `<span class="c-gray">${unknown} unknown</span> &middot; ` +
     `${scopedTotal} total${filterNote}${sitemapNote}`;
 
-  const rows = computeVisibleRows();
-
-  if (rows.length === 0) {
-    els.summaryList.innerHTML = '<div id="summaryEmpty">No URLs match the current filter</div>';
-    updateSelectedCount();
-    return;
-  }
-
-  const pillLabel = {
-    indexed: "Indexed",
-    not_indexed: "Not indexed",
-    requested: "Requested",
-    unknown: "Unknown",
-    in_progress: "Checking…",
-  };
-
-  let html = `<table class="summary-table">
-    <thead><tr>
-      <th class="col-check"><input type="checkbox" id="summarySelectAll" title="Select all visible" /></th>
-      <th class="col-url">URL</th>
-      <th class="col-status">Status</th>
-      <th class="col-checked" title="Last time status was observed">Checked</th>
-      <th class="col-indexed" title="First time URL was seen as indexed">Indexed</th>
-      <th class="col-requested" title="Last time indexing was requested">Requested</th>
-    </tr></thead><tbody>`;
-  for (const row of rows) {
-    const urlSafe = escapeHtml(row.url);
-    const rowClass = row.cat === "in_progress" ? " class=\"in-progress\"" : "";
-    const checked = summaryState.selected.has(row.url) ? " checked" : "";
-    html += `<tr${rowClass}>
-      <td class="col-check"><input type="checkbox" class="row-check" data-url="${urlSafe}"${checked} /></td>
-      <td class="col-url" title="${urlSafe}"><a href="${urlSafe}" target="_blank">${urlSafe}</a></td>
-      <td class="col-status"><span class="status-pill ${row.cat}">${pillLabel[row.cat]}</span></td>
-      <td class="col-checked" title="${escapeHtml(fullDateTitle(row.rec.checkedAt))}">${timeAgoShort(row.rec.checkedAt)}</td>
-      <td class="col-indexed" title="${escapeHtml(fullDateTitle(row.rec.indexedAt))}">${timeAgoShort(row.rec.indexedAt)}</td>
-      <td class="col-requested" title="${escapeHtml(fullDateTitle(row.rec.requestedAt))}">${timeAgoShort(row.rec.requestedAt)}</td>
-    </tr>`;
-  }
-  html += "</tbody></table>";
-  els.summaryList.innerHTML = html;
-
-  updateHeaderCheckbox(rows);
-  updateSelectedCount();
+  // URL list intentionally not rendered — it's too slow with many URLs.
+  // Use Copy/Export to retrieve the URLs matching the current filters.
+  els.summaryList.innerHTML =
+    '<div id="summaryEmpty">URL list hidden for performance. Use the Copy or Export buttons above to retrieve URLs matching the current filters.</div>';
+  setCopyButtonState(copyable);
 }
 
-function updateHeaderCheckbox(visibleRows) {
-  const header = document.getElementById("summarySelectAll");
-  if (!header) return;
-  if (visibleRows.length === 0) {
-    header.checked = false;
-    header.indeterminate = false;
-    return;
-  }
-  let selectedCount = 0;
-  for (const r of visibleRows) if (summaryState.selected.has(r.url)) selectedCount++;
-  header.checked = selectedCount === visibleRows.length;
-  header.indeterminate = selectedCount > 0 && selectedCount < visibleRows.length;
-}
-
-// URLs that would be copied/exported right now.
-// Default = everything visible (filter + search). If the user has ticked any
-// boxes, narrow to the intersection of ticked ∩ visible.
-function copyableUrls() {
-  const visible = computeVisibleRows().map((r) => r.url);
-  if (summaryState.selected.size === 0) return visible;
-  return visible.filter((u) => summaryState.selected.has(u));
-}
-
-function updateSelectedCount() {
-  const n = copyableUrls().length;
+function setCopyButtonState(n) {
   if (els.copySelectedCount) els.copySelectedCount.textContent = n;
   if (els.copySelectedBtn) els.copySelectedBtn.disabled = n === 0;
+}
+
+// URLs that would be copied/exported right now: everything matching the
+// current search + status filters.
+function copyableUrls() {
+  return computeVisibleRows().map((r) => r.url);
 }
 
 function refreshSummaryIfOpen() {
@@ -800,8 +725,7 @@ function rerenderSummaryIfOpen() {
 }
 
 // Light refresh: re-read stored records only, keep inputUrls in place.
-// Used during live runs so the row for the finished URL updates without
-// flashing "Loading…" or rebuilding the table from scratch.
+// Used during live runs so the counts update without flashing "Loading…".
 async function refreshSummaryRecordsIfOpen() {
   if (!els.summaryPanel.classList.contains("active")) return;
   if (!summaryState.domainUrl) return;
@@ -844,32 +768,6 @@ updateFilterButtonStates();
 els.summarySearch.addEventListener("input", (e) => {
   summaryState.search = e.target.value;
   renderSummary();
-});
-
-// Row checkbox & select-all delegation
-els.summaryList.addEventListener("change", (e) => {
-  const t = e.target;
-  if (t.classList.contains("row-check")) {
-    const url = t.dataset.url;
-    if (t.checked) summaryState.selected.add(url);
-    else summaryState.selected.delete(url);
-    updateHeaderCheckbox(computeVisibleRows());
-    updateSelectedCount();
-    return;
-  }
-  if (t.id === "summarySelectAll") {
-    const rows = computeVisibleRows();
-    if (t.checked) {
-      for (const r of rows) summaryState.selected.add(r.url);
-    } else {
-      for (const r of rows) summaryState.selected.delete(r.url);
-    }
-    els.summaryList.querySelectorAll(".row-check").forEach((cb) => {
-      cb.checked = summaryState.selected.has(cb.dataset.url);
-    });
-    t.indeterminate = false;
-    updateSelectedCount();
-  }
 });
 
 els.copySelectedBtn.addEventListener("click", () => {
@@ -1120,8 +1018,6 @@ els.gscAutoImportToggle.addEventListener("change", () => {
 els.summaryDomainSelect.addEventListener("change", () => {
   const v = els.summaryDomainSelect.value;
   summaryState.domainOverride = v || null;
-  // Reset selection set since we're switching domains.
-  summaryState.selected = new Set();
   refreshSummaryIfOpen();
 });
 
@@ -1254,7 +1150,6 @@ chrome.runtime.onMessage.addListener((msg) => {
       // domain just received URLs so the user sees the fresh data immediately.
       if (msg.importedDomainUrl) {
         summaryState.domainOverride = msg.importedDomainUrl;
-        summaryState.selected = new Set();
       }
       refreshSummaryIfOpen();
       break;
